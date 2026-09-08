@@ -1,0 +1,7 @@
+ID,title,descr,stock,price,currency_code,author_ID,genre_code,createdAt,createdBy,modifiedAt,modifiedBy
+550e8400-e29b-41d4-a716-446655440001,Cat,"A story about a mischievous cat and the mayor of a small town.",12,15.50,EUR,550e8400-e29b-41d4-a716-446655441001,FIC,2026-01-15T09:00:00Z,system,2026-01-15T09:00:00Z,system
+550e8400-e29b-41d4-a716-446655440002,Dog,"The loyal dog that saved a whole village.",5,18.00,USD,550e8400-e29b-41d4-a716-446655441002,FIC,2026-01-15T09:00:00Z,system,2026-01-15T09:00:00Z,system
+550e8400-e29b-41d4-a716-446655440003,Catalog of Dreams,"A poetic journey through libraries at night.",7,8.75,USD,550e8400-e29b-41d4-a716-446655441001,POE,2026-02-01T10:30:00Z,system,2026-02-01T10:30:00Z,system
+550e8400-e29b-41d4-a716-446655440004,Data Modeling 101,"Practical guide to structured data with CDS.",30,42.00,EUR,550e8400-e29b-41d4-a716-446655441003,TEC,2026-02-10T08:00:00Z,system,2026-02-10T08:00:00Z,system
+550e8400-e29b-41d4-a716-446655440005,SQL Deep Dive,"Advanced queries, optimization and views.",0,38.50,USD,550e8400-e29b-41d4-a716-446655441003,TEC,2026-03-01T11:00:00Z,system,2026-03-01T11:00:00Z,system
+550e8400-e29b-41d4-a716-446655440006,Winter Poems,"Selected poems from the northern winter.",9,12.25,USD,550e8400-e29b-41d4-a716-446655441002,POE,2026-03-05T14:20:00Z,system,2026-03-05T14:20:00Z,system

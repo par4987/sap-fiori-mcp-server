@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Evaluation set for @pired/sap-fiori-mcp-server.
+
+  Every question is answerable using ONLY this MCP server's tools, against the CAP project
+  bundled at examples/bookshop. Run the server with SAP_FIORI_MCP_WORKSPACE_ROOT pointing at
+  that folder (see eval/README.md) so the answers are reproducible.
+
+  All questions are read-only: none of them requires a tool that creates, modifies or deletes
+  anything. Answers were verified by solving each question with the tools themselves.
+-->
+<evaluation>
+  <qa_pair>
+    <question>The CAP project in this workspace ships sample data recording how many units of each title are on the shelf and what a single unit costs. Group that stock by literary category and work out the total amount of money tied up in each category. Which category holds the largest amount? Answer with the category's human-readable name, not its short key.</question>
+    <answer>Technology</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Using the sample data of the CAP project in this workspace, determine which writer's titles represent the greatest amount of money sitting in the warehouse, counting units in stock multiplied by unit price and summing over everything that writer produced. In which year was that writer born? Answer with a four-digit year and nothing else.</question>
+    <answer>1815</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Three entities are persisted in the database layer of the CAP project in this workspace. Two of them reuse a common CDS building block that stamps audit columns (who created a row and when) onto every record; the third one does not. Which entity is the exception? Answer with its short name.</question>
+    <answer>Genres</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>The documentation bundled with this server recommends one specific primary-key type for entities that will back a Fiori elements application. Exactly one entity in the database layer of this workspace's CAP project ignores that recommendation. What CDS type is declared for that entity's key element? Answer exactly as it is written in the model, for example Integer or String(5).</question>
+    <answer>String(3)</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>The service in this workspace's CAP project does not publish its entity sets under the URL you would derive from the service name, because an annotation overrides it. Combining that annotation with how CAP exposes OData V4 services, what base path should the manifest of a generated Fiori elements app use as its main data source? Answer as a path that starts and ends with a slash.</question>
+    <answer>/odata/v4/browse/</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>In the database layer of this workspace's CAP project, exactly one relationship points at a collection of rows rather than at a single row. Identify the entity that declares it and the name of the element declaring it, and answer with the two joined by a dot, for example Foo.bar.</question>
+    <answer>Authors.books</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Besides reading and projecting entities, the service of this workspace's CAP project declares exactly one callable operation. One of its parameters is not typed with a primitive type but by pointing at the key of an entity the service exposes. Follow that reference down to the database layer: what CDS type does the parameter ultimately resolve to? Answer with the type name only.</question>
+    <answer>UUID</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>A colleague asks for a Fiori elements page that combines a filter bar, charts and a table in a single hybrid screen. According to the floorplan support this server implements, which OData protocol version is required to generate that floorplan? Answer 2.0 or 4.0 and nothing else.</question>
+    <answer>2.0</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Restrict yourself to the titles that entered the sample data of this workspace's CAP project during the last month of the first quarter of 2026. Of the writers behind those titles, which one was born earlier? Give the full name exactly as it is stored in the data.</question>
+    <answer>Ada Lovelace</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Find the most expensive title in the sample data of this workspace's CAP project and note which currency its price is expressed in. Among all the titles priced in that same currency, which one has the fewest units on the shelf? Answer with the title.</question>
+    <answer>Cat</answer>
+  </qa_pair>
+</evaluation>

@@ -1,0 +1,22 @@
+{
+  "name": "bookshop-demo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Minimal CAP bookshop used to test @pired/sap-fiori-mcp-server tools (search_model, query_cap_data, generate_fiori_app_cap)",
+  "dependencies": {
+    "@sap/cds": "^8"
+  },
+  "scripts": {
+    "watch": "cds watch"
+  },
+  "cds": {
+    "requires": {
+      "auth": {
+        "users": {
+          "alice": { "roles": ["admin"] },
+          "bob": { "roles": [] }
+        }
+      }
+    }
+  }
+}

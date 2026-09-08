@@ -1,0 +1,61 @@
+{
+  "name": "@pired/sap-fiori-mcp-server",
+  "version": "1.4.0",
+  "description": "Unified Model Context Protocol (MCP) server for SAP Fiori development: Fiori Elements app generation (5 floorplans), UI5 metadata & tooling, CAP/CDS model introspection and SAP BTP destinations connectivity (OData V2/V4 queries). Inspired by @sap-ux/fiori-mcp-server, @ui5/mcp-server and @cap-js/mcp-server. Zero SAP dependencies.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20.17.0"
+  },
+  "bin": {
+    "sap-fiori-mcp": "dist/index.js",
+    "sap-fiori-mcp-server": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "docs",
+    "examples",
+    "README.md",
+    "README.en.md",
+    "LICENSE",
+    ".env.example"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepublishOnly": "npm run typecheck && npm run build && npm test",
+    "start": "node dist/index.js",
+    "start:http": "node dist/index.js --http --port 3001",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "keywords": [
+    "sap",
+    "fiori",
+    "fiori-elements",
+    "ui5",
+    "cap",
+    "cds",
+    "odata",
+    "btp",
+    "sap-btp",
+    "destinations",
+    "mcp",
+    "model-context-protocol",
+    "ai",
+    "llm",
+    "scaffolding"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}
