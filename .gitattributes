@@ -1,0 +1,25 @@
+# Normalize line endings so the repo reads the same on Windows, macOS and Linux.
+# Without this, a Windows checkout rewrites every file to CRLF and the next commit from
+# another platform shows whole files as changed.
+* text=auto eol=lf
+
+# Files that only work with a specific ending, regardless of the rule above.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+*.sh  text eol=lf
+
+# Never touched: byte-for-byte content that line-ending conversion would corrupt.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.zip binary
+
+# Generated: collapsed in diffs and excluded from language statistics.
+package-lock.json linguist-generated=true -diff
