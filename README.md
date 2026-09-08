@@ -227,7 +227,7 @@ docker run -i --rm sap-fiori-mcp-server
 |---|---|
 | `list_btp_destinations` | Lista los destinations disponibles: locales (env/JSON/archivo/carpeta) y del **BTP Destination Service** en la nube. Secretos redactados. |
 | `get_btp_destination` | Detalles de un destination (URL, auth, sap-client, headers) con secretos redactados y preview de la autenticación resuelta. |
-| `query_odata_data` | Ejecuta una query OData V2/V4 contra un entity set vía `destination` BTP, `systemName` de `list_sap_systems` o `serviceUrl` directa. Soporta `$filter`, `$top`, `$skip`, `$select`, `$orderby`, `$expand`, `$count`. Es la contraparte remota de `query_cap_data`. |
+| `query_odata_data` | Ejecuta una query OData V2/V4 contra un entity set vía `destination` BTP, `systemName` de `list_sap_systems` o `serviceUrl` directa. Soporta `$filter`, `$top`, `$skip`, `$select`, `$orderby`, `$expand` y el total de filas (`$count` en V4, `$inlinecount` en V2, con detección automática). Es la contraparte remota de `query_cap_data`. |
 
 ## 🔧 Variables de entorno
 
@@ -352,7 +352,7 @@ sap-fiori-mcp-server/
 ```bash
 npm run build       # tsc → dist/
 npm run typecheck   # tsc --noEmit
-npm test            # vitest run (119 tests)
+npm test            # vitest run (124 tests)
 npm run test:watch  # vitest watch
 ```
 

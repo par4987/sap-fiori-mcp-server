@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { extractRows } from "../src/odata/client.js";
 import { queryCsv } from "../src/cap/csv.js";
 import { searchDocs, fuzzyNameScore } from "../src/util/search.js";
 import { searchAllDocs } from "../src/docs/index.js";
@@ -100,5 +101,34 @@ describe("parseEdmx", () => {
     const travelSet = model.entitySets.find((s) => s.name === "Travel")!;
     expect(travelSet.entityType).toBe("ns.travel.Travel");
     expect(travelSet.navigations["_Agency"]).toBe("Agency");
+  });
+});
+
+// Response shapes taken from live services.odata.org calls: the V2 endpoint switches `d` from an
+// object with `results` to a bare array once $expand is in play, which used to yield one "row"
+// that was actually the whole array.
+describe("extractRows across real OData response shapes", () => {
+  it("reads a V4 collection and its @odata.count", () => {
+    expect(extractRows({ value: [{ ID: 1 }, { ID: 2 }], "@odata.count": 7 })).toEqual({ rows: [{ ID: 1 }, { ID: 2 }], inlineCount: 7 });
+  });
+
+  it("reads a V2 collection and its string __count", () => {
+    const r = extractRows({ d: { results: [{ ID: 1 }], __count: "42" } });
+    expect(r.rows).toEqual([{ ID: 1 }]);
+    expect(r.inlineCount).toBe(42);
+  });
+
+  it("reads a V2 payload where d is the array itself", () => {
+    const r = extractRows({ d: [{ OrderID: 10248 }, { OrderID: 10249 }] });
+    expect(r.rows).toEqual([{ OrderID: 10248 }, { OrderID: 10249 }]);
+  });
+
+  it("reads a V2 single entity", () => {
+    expect(extractRows({ d: { ID: 1, title: "x" } }).rows).toEqual([{ ID: 1, title: "x" }]);
+  });
+
+  it("returns nothing for an empty or unknown payload", () => {
+    expect(extractRows(undefined).rows).toEqual([]);
+    expect(extractRows({}).rows).toEqual([]);
   });
 });

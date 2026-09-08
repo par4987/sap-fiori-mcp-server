@@ -146,17 +146,31 @@ export function resolveSystem(config: AppConfig, name?: string): SapSystem | und
   return config.sapSystems.find((s) => s.name.toLowerCase() === name.toLowerCase());
 }
 
-/** Extract rows from OData JSON response for V2 (d.results) and V4 (value). */
+/** V4 reports the total as a number, V2 as a string. */
+function countOf(raw: unknown): number | undefined {
+  if (typeof raw === "number") return raw;
+  if (typeof raw === "string") {
+    const n = Number.parseInt(raw, 10);
+    return Number.isFinite(n) ? n : undefined;
+  }
+  return undefined;
+}
+
+/** Extract rows from OData JSON response for V2 (d.results / d array) and V4 (value). */
 export function extractRows(json: unknown): { rows: unknown[]; inlineCount?: number } {
   const obj = json as Record<string, unknown> | undefined;
   if (!obj) return { rows: [] };
-  if (Array.isArray(obj.value)) {
-    return { rows: obj.value, inlineCount: typeof obj["@odata.count"] === "number" ? obj["@odata.count"] : undefined };
-  }
-  const d = obj.d as Record<string, unknown> | undefined;
+  if (Array.isArray(obj.value)) return { rows: obj.value, inlineCount: countOf(obj["@odata.count"]) };
+  // V2 shapes seen in the wild: { d: { results: [...] } }, { d: [...] } (some services do this
+  // once $expand/$select are involved) and { d: {...} } for a single entity.
+  const d = obj.d as Record<string, unknown> | unknown[] | undefined;
+  if (Array.isArray(d)) return { rows: d };
   if (d) {
-    if (Array.isArray(d.results)) return { rows: d.results, inlineCount: typeof d.__count === "string" ? parseInt(d.__count, 10) : undefined };
-    return { rows: [d] };
+    const wrapper = d as Record<string, unknown>;
+    if (Array.isArray(wrapper.results)) {
+      return { rows: wrapper.results, inlineCount: countOf(wrapper.__count) };
+    }
+    return { rows: [wrapper] };
   }
   return { rows: [] };
 }

@@ -39,7 +39,7 @@ export interface AppConfig {
 }
 
 export const SERVER_NAME = "@pired/sap-fiori-mcp-server";
-export const SERVER_VERSION = "1.4.0";
+export const SERVER_VERSION = "1.5.0";
 
 function env(name: string, fallback = ""): string {
   return (process.env[name] ?? fallback).trim();

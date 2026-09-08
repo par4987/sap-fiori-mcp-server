@@ -137,7 +137,14 @@ export function registerBtpTools(server: McpServer, config: AppConfig, name: (n:
         select: z.string().optional().describe("$select comma-separated fields"),
         orderBy: z.string().optional().describe("$orderby, e.g. 'CreatedAt desc'"),
         expand: z.string().optional().describe("$expand navigation properties, e.g. '_Travel,_Agency'"),
-        count: z.boolean().optional().describe("Include $count=true to get the total number of rows"),
+        count: z.boolean().optional().describe("Ask the service for the total number of rows"),
+        odataVersion: z
+          .enum(["2.0", "4.0"])
+          .optional()
+          .describe(
+            "Service OData version. Only affects how the total is requested: $count=true in V4, $inlinecount=allpages in V2. " +
+              "When omitted, V4 is tried first and V2 is retried automatically if the service rejects it."
+          ),
         maxRows: z.number().int().min(1).max(500).default(100).describe("Max rows included in the tool output (safety limit)")
       },
       outputSchema: queryODataOutput,
@@ -151,19 +158,49 @@ export function registerBtpTools(server: McpServer, config: AppConfig, name: (n:
           config.requestTimeoutMs
         );
         const base = target.url.replace(/\/$/, "");
-        const url = appendSearchParams(`${base}/${args.entitySet.replace(/^\//, "")}`, {
-          $filter: args.filter,
-          $top: args.top !== undefined ? String(args.top) : args.count ? undefined : "50",
-          $skip: args.skip !== undefined ? String(args.skip) : undefined,
-          $select: args.select,
-          $orderby: args.orderBy,
-          $expand: args.expand,
-          $count: args.count ? "true" : undefined,
-          $format: "json"
-        });
-        const res = await odataRequest({ url, system: target.system, headers: target.headers, timeoutMs: config.requestTimeoutMs, config, trustedUrls: target.trustedUrls });
+        // V2 and V4 ask for the row total with different query options: $count is not a query
+        // option at all in V2 (there it is a path segment), and services reject it outright.
+        const countParams = (version: "2.0" | "4.0") =>
+          !args.count ? {} : version === "2.0" ? { $inlinecount: "allpages" } : { $count: "true" };
+        const buildUrl = (version: "2.0" | "4.0") =>
+          appendSearchParams(`${base}/${args.entitySet.replace(/^\//, "")}`, {
+            $filter: args.filter,
+            $top: args.top !== undefined ? String(args.top) : args.count ? undefined : "50",
+            $skip: args.skip !== undefined ? String(args.skip) : undefined,
+            $select: args.select,
+            $orderby: args.orderBy,
+            $expand: args.expand,
+            ...countParams(version),
+            $format: "json"
+          });
+
+        const request = (u: string) =>
+          odataRequest({ url: u, system: target.system, headers: target.headers, timeoutMs: config.requestTimeoutMs, config, trustedUrls: target.trustedUrls });
+
+        let version: "2.0" | "4.0" = args.odataVersion ?? "4.0";
+        let url = buildUrl(version);
+        let res = await request(url);
+        // the caller usually does not know the version; recover instead of failing on a V2 service
+        if (!res.ok && res.status === 400 && args.count && !args.odataVersion && /\$count/.test(res.text)) {
+          version = "2.0";
+          url = buildUrl(version);
+          res = await request(url);
+        }
         if (!res.ok) {
-          return json({ appliedUrl: url, source: target.source, status: res.status, error: `HTTP ${res.status}`, body: res.text.slice(0, 2000) }, true);
+          return json(
+            {
+              appliedUrl: url,
+              source: target.source,
+              status: res.status,
+              error: `HTTP ${res.status}`,
+              body: res.text.slice(0, 2000),
+              hint:
+                res.status === 400 && args.count
+                  ? "The service rejected the query. If it is OData V2, pass odataVersion:'2.0' so the total is requested as $inlinecount=allpages."
+                  : undefined
+            },
+            true
+          );
         }
         const { rows, inlineCount } = extractRows(res.json);
         const maxRows = args.maxRows ?? 100;
@@ -176,6 +213,7 @@ export function registerBtpTools(server: McpServer, config: AppConfig, name: (n:
           appliedUrl: url,
           count: returned.length,
           rowCount: returned.length, // deprecated alias of `count`, kept for compatibility
+          odataVersion: version,
           total: inlineCount,
           inlineCount,
           truncatedTo: rows.length > maxRows ? maxRows : undefined,

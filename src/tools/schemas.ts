@@ -275,6 +275,7 @@ export const getDestinationOutput = {
 export const queryODataOutput = {
   source: z.string(),
   appliedUrl: z.string(),
+  odataVersion: z.string().describe("Convention used to request the total: '4.0' ($count) or '2.0' ($inlinecount)"),
   rows: z.array(z.unknown()),
   count: z.number().int().describe("Rows in this response"),
   rowCount: z.number().int().describe("Deprecated alias of count; use count"),
