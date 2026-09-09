@@ -231,12 +231,12 @@ async function inspectKey() {
                   ['endpoint ADT', k.endpointUrl || '—'], ['endpoint OData', k.webEndpointUrl || '—'], ['system id', k.systemId || '—']];
     $('keyInfo').innerHTML = '<div class="result">' + rows.map(r =>
       '<div class="step"><span class="pill">' + r[0] + '</span><span class="mono">' + esc(r[1]) + '</span></div>').join('') +
-      (k.kind === 'abap-environment' ? '<div class="verdict">Los servicios OData se sirven en el endpoint <strong>-web</strong>; el otro es el de ADT y rechaza un token de client credentials.</div>' : '') +
+      (k.kind === 'abap-environment' ? '<div class="verdict">Los servicios se consumen en el <strong>endpoint</strong>, con token de usuario nombrado (<code>OAuth2RefreshToken</code>, tras <code>--btp-login</code>). El <em>-web</em> es el del launchpad y responde con una página de login.</div>' : '') +
       '</div>';
-    if (!$('f_url').value) $('f_url').value = k.webEndpointUrl || k.endpointUrl || '';
-    // client credentials basta para los servicios OData; el refresh token solo hace falta para
-    // ADT, que exige un usuario nombrado
-    $('f_auth').value = 'OAuth2ClientCredentials';
+    if (!$('f_url').value) $('f_url').value = k.endpointUrl || '';
+    // un ABAP Environment exige usuario nombrado también para OData: el token de client
+    // credentials recibe 401 en el host de APIs y una página de login en el -web
+    $('f_auth').value = k.kind === 'abap-environment' ? 'OAuth2RefreshToken' : 'OAuth2ClientCredentials';
   } catch (e) { $('keyInfo').innerHTML = '<div class="err">' + esc(e.message) + '</div>'; }
 }
 

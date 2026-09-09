@@ -33,12 +33,12 @@ export interface ParsedServiceKey {
   /** The service's own endpoint — the ABAP system URL for an ABAP Environment key. */
   endpointUrl?: string;
   /**
-   * Where the business services live, which is not where ADT lives.
+   * The `-web` twin of the endpoint, which serves the Fiori launchpad and browser-facing apps.
    *
-   * An ABAP Environment answers ADT on the host the key names and OData on the same host with
-   * `-web` in it. The distinction is not cosmetic: the ADT host refuses a client-credentials
-   * token because ADT needs a named user, while the web host accepts it. Pointing a destination
-   * at the wrong one produces a 401 that looks like bad credentials and is not.
+   * It is reported because it exists and is easy to confuse with the API host, not because APIs
+   * live there: reached without a browser session it answers 200 with a login page, which is
+   * harder to diagnose than the API host's honest 401. OData services are consumed on the host
+   * the key names, with a named-user token.
    */
   webEndpointUrl?: string;
   systemId?: string;

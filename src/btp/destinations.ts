@@ -113,9 +113,9 @@ export function normalizeDestination(raw: Record<string, unknown>, source: Desti
   if (serviceKeyPath) {
     try {
       const key = readServiceKeyFile(serviceKeyPath);
-      // this server consumes OData, which an ABAP Environment serves on its -web host; the host
-      // the key names is the ADT one and refuses a client-credentials token
-      fromKey = { clientId: key.clientId, clientSecret: key.clientSecret, tokenServiceUrl: key.tokenUrl, url: key.webEndpointUrl ?? key.endpointUrl };
+      // the host the key names is the one that serves the APIs; its -web twin only answers
+      // browsers, and answers them with a login page rather than an error
+      fromKey = { clientId: key.clientId, clientSecret: key.clientSecret, tokenServiceUrl: key.tokenUrl, url: key.endpointUrl };
     } catch (e) {
       logger.warn("destination service key could not be read", { name, serviceKeyPath, error: String(e) });
     }
