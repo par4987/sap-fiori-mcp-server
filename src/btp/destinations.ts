@@ -556,6 +556,26 @@ export async function resolveODataTarget(
   throw new Error("Provide a BTP destination name, a systemName (+servicePath) from list_sap_systems, or a full serviceUrl. Run list_btp_destinations / list_sap_systems first.");
 }
 
+/**
+ * The URL a destination or system would be called on, without authenticating.
+ *
+ * Composing a URL to write into a manifest should not cost an OAuth round trip: the token buys
+ * nothing here, and a service key that is momentarily unreachable would stop an app from being
+ * generated for no reason. Returns null when nothing names a target.
+ */
+export function resolveODataUrl(config: AppConfig, p: { destination?: string; systemName?: string; servicePath?: string }): string | null {
+  // Nothing named means nothing to resolve. resolveSystem falls back to the first configured
+  // system when asked for no name in particular, which is a helpful default for a query the
+  // caller aimed somewhere — and a wrong answer when composing a URL out of thin air.
+  if (!p.destination && !p.systemName && !p.servicePath) return null;
+  const base = p.destination
+    ? loadDestinations(config).find((d) => d.name.toLowerCase() === p.destination!.toLowerCase())?.url
+    : resolveSystem(config, p.systemName)?.url;
+  if (!base) return null;
+  const url = p.servicePath ? joinUrl(base, p.servicePath) : base;
+  return url.endsWith("/") ? url : `${url}/`;
+}
+
 /** Find a destination by name across local sources and the destination service. */
 export async function findDestination(config: AppConfig, name: string, timeoutMs = 30000): Promise<BtpDestination | null> {
   const local = loadDestinations(config).find((d) => d.name.toLowerCase() === name.toLowerCase());

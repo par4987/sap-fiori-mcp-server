@@ -195,7 +195,7 @@ docker run -i --rm sap-fiori-mcp-server
 | `list_sap_systems` | Lista los sistemas SAP configurados (env vars o `~/.sap-fiori-mcp/systems.json`). |
 | `download_odata_service_metadata` | Descarga el `$metadata` EDMX de un servicio OData V2/V4 y lo guarda como `metadata.xml`; devuelve resumen de entity sets y tipos. Acepta `serviceUrl`, `systemName (+servicePath)` o `destination (+servicePath)` BTP. |
 | `get_metadata_summary` | Resume un `metadata.xml` local (entidades, claves, asociaciones, anotaciones). |
-| `generate_fiori_app_odata` | Genera una app Fiori elements para servicios OData no-CAP (p.ej. RAP). **Floorplans**: `list-report` (LR+ObjectPage, V4+V2), `object-page` (form entry, V4), `worklist` (V4+V2), `analytical-list-page` (V2), `overview-page` (V2). Opcional: FCL, initial load. Combos no soportados se ajustan con warning. |
+| `generate_fiori_app_odata` | Genera una app Fiori elements para servicios OData no-CAP (p.ej. RAP). Acepta `destination`/`systemName` + `servicePath` —los mismos argumentos que descargaron la metadata— y escribe la URL real del servicio en el manifest. **Floorplans**: `list-report` (LR+ObjectPage, V4+V2), `object-page` (form entry, V4), `worklist` (V4+V2), `analytical-list-page` (V2), `overview-page` (V2). Opcional: FCL, initial load. Combos no soportados se ajustan con warning. |
 | `generate_fiori_app_cap` | Genera una app Fiori elements dentro de un proyecto CAP existente, resolviendo servicio y entidad del modelo CDS automáticamente. Floorplans: `list-report`, `object-page`, `worklist`. |
 | `list_functionality` | **Paso 1/3** — Lista las modificaciones soportadas para una app existente. |
 | `get_functionality_details` | **Paso 2/3** — Parámetros requeridos por una funcionalidad. |
@@ -439,7 +439,7 @@ sap-fiori-mcp-server/
 ```bash
 npm run build       # tsc → dist/
 npm run typecheck   # tsc --noEmit
-npm test            # vitest run (196 tests)
+npm test            # vitest run (201 tests)
 npm run test:watch  # vitest watch
 ```
 

@@ -8,7 +8,7 @@ import { generateFioriApp } from "../fiori/generate.js";
 import { listFunctionalities, getFunctionalityDetails, executeFunctionality } from "../fiori/functionality.js";
 import { resolvePath, readText, writeFileSafe, relativePaths } from "../util/fs.js";
 import { resolveSystem, fetchServiceMetadata } from "../odata/client.js";
-import { resolveODataTarget } from "../btp/destinations.js";
+import { resolveODataTarget, resolveODataUrl } from "../btp/destinations.js";
 import { parseEdmx } from "../odata/edmx.js";
 import { json, err, READ_LOCAL, WRITE_CREATE, WRITE_MODIFY, WRITE_REMOTE } from "./index.js";
 import {
@@ -178,6 +178,9 @@ export function registerFioriTools(server: McpServer, config: AppConfig, name: (
         workspacePath: z.string().optional().describe("Target workspace root; app is created as <workspace>/<appName>/"),
         metadataXmlPath: z.string().optional().describe("Path to a local metadata.xml"),
         serviceUrl: z.string().optional().describe("OData service URL to store in the manifest dataSources"),
+        destination: z.string().optional().describe("BTP destination the service belongs to; with servicePath it supplies serviceUrl, so the same arguments that downloaded the metadata also generate the app"),
+        systemName: z.string().optional().describe("Configured SAP system name; with servicePath it supplies serviceUrl"),
+        servicePath: z.string().optional().describe("Service path relative to the destination/system URL, e.g. /sap/opu/odata4/sap/zsb_x/srvd/sap/zsd_x/0001"),
         odataVersion: z.enum(["2.0", "4.0"]).optional().describe("Force OData version (auto-detected from metadata)"),
         floorplan: floorplanAllSchema,
         ...generateCommon
@@ -187,6 +190,9 @@ export function registerFioriTools(server: McpServer, config: AppConfig, name: (
     },
     async (args) => {
       try {
+        // the same destination + servicePath that fetched the metadata can name the service, so
+        // the manifest does not end up with a guessed URL the operator has to correct by hand
+        const serviceUrl = args.serviceUrl ?? resolveODataUrl(config, { destination: args.destination, systemName: args.systemName, servicePath: args.servicePath }) ?? undefined;
         const result = await generateFioriApp({
           targetPath: args.workspacePath ?? config.workspaceRoot,
           appName: args.appName,
@@ -195,7 +201,7 @@ export function registerFioriTools(server: McpServer, config: AppConfig, name: (
           namespace: args.namespace,
           entitySet: args.entitySet,
           metadataXmlPath: args.metadataXmlPath ? resolvePath(args.metadataXmlPath) : undefined,
-          serviceUrl: args.serviceUrl,
+          serviceUrl,
           odataVersion: args.odataVersion,
           floorplan: args.floorplan,
           addFcl: args.addFcl ?? true,

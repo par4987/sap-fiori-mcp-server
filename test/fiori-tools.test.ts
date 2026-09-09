@@ -1,4 +1,6 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi, afterEach } from "vitest";
+import { resolveODataUrl } from "../src/btp/destinations.js";
+import { loadConfig } from "../src/config.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -229,5 +231,49 @@ describe("functionality workflow", () => {
     executeFunctionality(appDir, "update_manifest", { jsonPointer: "sap.app/title", value: "Nuevo título" });
     const manifest2 = JSON.parse(fs.readFileSync(path.join(appDir, "webapp", "manifest.json"), "utf8"));
     expect(manifest2["sap.app"]["title"]).toBe("Nuevo título");
+  });
+});
+
+// The same destination and servicePath that fetched the metadata should name the service when the
+// app is generated, so the manifest does not carry a guessed URL somebody has to notice and fix.
+describe("resolving the service URL for a generated app", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  const configWith = (systems: unknown[], destinations: unknown[] = []) => {
+    vi.stubEnv("SAP_SYSTEMS_JSON", JSON.stringify(systems));
+    vi.stubEnv("SAP_DESTINATIONS_JSON", JSON.stringify(destinations));
+    vi.stubEnv("SAP_DESTINATIONS_DIR", "");
+    return loadConfig([]);
+  };
+
+  it("composes the URL from a destination and a service path", () => {
+    const config = configWith([], [{ Name: "BTP", URL: "https://abap.example", Authentication: "NoAuthentication" }]);
+    expect(resolveODataUrl(config, { destination: "BTP", servicePath: "/sap/opu/odata4/sap/x/srvd/sap/y/0001" })).toBe(
+      "https://abap.example/sap/opu/odata4/sap/x/srvd/sap/y/0001/"
+    );
+  });
+
+  it("composes it from a named system too", () => {
+    const config = configWith([{ name: "A4H", url: "https://s4.example:44324" }]);
+    expect(resolveODataUrl(config, { systemName: "A4H", servicePath: "/srv" })).toBe("https://s4.example:44324/srv/");
+  });
+
+  // resolveSystem answers with the first configured system when asked for no name in particular.
+  // That is a good default for a query aimed somewhere, and a wrong answer here: an app generated
+  // without naming a target would silently carry an unrelated system's host, with no warning.
+  it("resolves nothing when the caller named no target at all", () => {
+    const config = configWith([{ name: "A4H", url: "https://s4.example:44324" }]);
+    expect(resolveODataUrl(config, {})).toBeNull();
+  });
+
+  it("returns null when the named target does not exist", () => {
+    const config = configWith([{ name: "A4H", url: "https://s4.example" }]);
+    expect(resolveODataUrl(config, { destination: "ABSENT", servicePath: "/srv" })).toBeNull();
+  });
+
+  it("always ends the URL with a slash, which is what a manifest dataSource expects", () => {
+    const config = configWith([], [{ Name: "D", URL: "https://h", Authentication: "NoAuthentication" }]);
+    expect(resolveODataUrl(config, { destination: "D" })).toBe("https://h/");
+    expect(resolveODataUrl(config, { destination: "D", servicePath: "/a/b" })).toBe("https://h/a/b/");
   });
 });

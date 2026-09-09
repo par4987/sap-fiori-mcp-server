@@ -90,7 +90,10 @@ export async function generateFioriApp(params: {
   let serviceUri = params.serviceUrl ?? "";
   if (!serviceUri) {
     serviceUri = params.isCap ? "/service-root/" : "/sap/opu/odata4/";
-    warnings.push(`serviceUri guessed as "${serviceUri}" — adjust sap.app/dataSources/mainService/uri in manifest.json to your real service path.`);
+    warnings.push(
+      `serviceUri guessed as "${serviceUri}". Pass serviceUrl, or the destination/systemName plus servicePath that the service lives at, ` +
+        "and it will be written correctly; otherwise adjust sap.app/dataSources/mainService/uri in manifest.json by hand."
+    );
   }
 
   const odataVersion: "2.0" | "4.0" =
