@@ -49,7 +49,7 @@ npm install && npm run build
 ```bash
 git clone <this-repo> && cd sap-fiori-mcp-server
 npm install && npm run build
-npm test              # 131 unit + integration tests
+npm test              # 148 unit + integration tests
 npm start             # stdio mode
 npm run start:http    # HTTP mode on http://localhost:3001/mcp
 ```
@@ -119,6 +119,23 @@ docker run -i --rm sap-fiori-mcp-server   # stdio
 
 **SAP BTP**: `list_btp_destinations` (local + Destination Service, redacted), `get_btp_destination` (details + resolved auth preview), `query_odata_data` (remote OData V2/V4 queries with $filter/$top/$skip/$select/$orderby/$expand/$count via destination, system or URL)
 
+## Connection admin panel
+
+```bash
+npx @pired/sap-fiori-mcp-server --admin
+```
+
+A local panel to create, edit, rename and delete SAP systems and BTP destinations, and to **test
+each connection**: host reachability, credential acceptance and `$metadata` readability, showing
+the HTTP status, the answering `sap-system`, the realm and the actual SAP message. It also reports
+whether the TLS certificate is trusted and which `${env:...}` variables are unset.
+
+It binds to `127.0.0.1` only, requires a token minted at each launch and sent as a header, sets no
+cookies (removing CSRF rather than mitigating it), and refuses any request whose `Host` is not the
+loopback — which is what closes DNS rebinding from the operator's own browser. No secret crosses
+the boundary: a password is accepted only as `${env:NAME}`, and secrets already literal in a
+destination file are preserved on write but never returned.
+
 ## Environment variables
 
 | Variable | Default | Description |
@@ -173,7 +190,7 @@ Copy the rules from [`docs/AGENTS-rules.md`](./docs/AGENTS-rules.md) into your `
 ```bash
 npm run build       # tsc → dist/
 npm run typecheck   # tsc --noEmit
-npm test            # vitest run (131 tests)
+npm test            # vitest run (148 tests)
 ```
 
 **Server evaluation**: [`eval/evaluation.xml`](./eval/evaluation.xml) holds 10 read-only questions

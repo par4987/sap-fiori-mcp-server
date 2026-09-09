@@ -1,0 +1,528 @@
+/**
+ * What the admin panel is allowed to do.
+ *
+ * One rule shapes everything here: **no secret crosses this boundary.** A password is accepted
+ * only as a `${env:NAME}` reference, never as a literal, and values read back from disk are
+ * redacted before they leave. That is not caution for its own sake — a panel that took a
+ * password over HTTP would put a credential through Node's memory and an HTTP request for the
+ * first time, and would tempt the operator into storing it in a file instead of the environment.
+ *
+ * Secrets that already sit literally in a destination file (someone exported it from the BTP
+ * cockpit) are preserved untouched on write: the panel patches the fields it owns and copies the
+ * rest through, so editing a destination never silently drops its client secret.
+ */
+import fs from "node:fs";
+import https from "node:https";
+import tls from "node:tls";
+import http from "node:http";
+import path from "node:path";
+import { URL } from "node:url";
+import type { AppConfig, SapSystem } from "../config.js";
+import { loadConfig } from "../config.js";
+import { stripBom } from "../util/fs.js";
+import { expandEnvRefs } from "../util/envref.js";
+
+export interface EnvRef {
+  /** Variable named by a `${env:NAME}` reference. */
+  name: string;
+  resolved: boolean;
+}
+
+export interface SystemCard {
+  name: string;
+  url: string;
+  client?: string;
+  user?: string;
+  /** How the password is configured — never the value. */
+  password: { kind: "env-ref" | "literal" | "none"; envRefs: EnvRef[] };
+}
+
+export interface DestinationCard {
+  name: string;
+  url: string;
+  authType: string;
+  proxyType?: string;
+  client?: string;
+  user?: string;
+  file: string;
+  /** Names of the secret-bearing fields present, plus how each is configured. */
+  secrets: { field: string; kind: "env-ref" | "literal"; envRefs: EnvRef[] }[];
+  customHeaders: string[];
+}
+
+const ENV_REF = /\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g;
+const SECRET_FIELDS = ["password", "Password", "clientSecret", "clientsecret", "ClientSecret", "tokenServicePassword", "userToken"];
+
+function envRefsOf(value: string): EnvRef[] {
+  return [...value.matchAll(ENV_REF)].map((m) => ({ name: m[1], resolved: !!process.env[m[1]] }));
+}
+
+function classify(value: string | undefined): { kind: "env-ref" | "literal" | "none"; envRefs: EnvRef[] } {
+  if (!value) return { kind: "none", envRefs: [] };
+  const refs = envRefsOf(value);
+  return refs.length ? { kind: "env-ref", envRefs: refs } : { kind: "literal", envRefs: [] };
+}
+
+// --- paths ------------------------------------------------------------------
+
+export function paths(): { dataDir: string; systemsFile: string; destinationsDir: string } {
+  const config = loadConfig([]);
+  return {
+    dataDir: config.dataDir,
+    systemsFile: process.env.SAP_SYSTEMS_FILE?.trim() || path.join(config.dataDir, "systems.json"),
+    destinationsDir: process.env.SAP_DESTINATIONS_DIR?.trim() || path.join(config.dataDir, "destinations")
+  };
+}
+
+function readJsonFile<T>(file: string, fallback: T): T {
+  try {
+    return JSON.parse(stripBom(fs.readFileSync(file, "utf8"))) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+/** Always UTF-8 without a BOM: the whole point is that the next reader does not trip over one. */
+function writeJsonFile(file: string, data: unknown): void {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(data, null, 2) + "\n", { encoding: "utf8" });
+}
+
+// --- systems ----------------------------------------------------------------
+
+type RawSystem = Record<string, unknown>;
+
+function rawSystems(): RawSystem[] {
+  const { systemsFile } = paths();
+  const raw = readJsonFile<unknown>(systemsFile, []);
+  if (Array.isArray(raw)) return raw as RawSystem[];
+  if (raw && typeof raw === "object" && Array.isArray((raw as { systems?: unknown }).systems)) {
+    return (raw as { systems: RawSystem[] }).systems;
+  }
+  return [];
+}
+
+export function listSystems(): { file: string; systems: SystemCard[] } {
+  const { systemsFile } = paths();
+  return {
+    file: systemsFile,
+    systems: rawSystems().map((s) => ({
+      name: String(s.name ?? ""),
+      url: String(s.url ?? ""),
+      client: s.client ? String(s.client) : undefined,
+      user: s.user ? String(s.user) : undefined,
+      password: classify(typeof s.password === "string" ? s.password : undefined)
+    }))
+  };
+}
+
+export interface SystemPatch {
+  name: string;
+  url: string;
+  client?: string;
+  user?: string;
+  /** Must be a `${env:NAME}` reference or empty. A literal is refused. */
+  password?: string;
+  /** Present when renaming: the entry to replace. */
+  previousName?: string;
+}
+
+export function saveSystem(patch: SystemPatch): { ok: true } {
+  const name = patch.name.trim();
+  if (!name) throw new Error("A system needs a name.");
+  if (!patch.url.trim()) throw new Error(`System '${name}' needs a URL, e.g. https://host:44300`);
+  assertUrl(patch.url, name);
+
+  const password = (patch.password ?? "").trim();
+  if (password && !ENV_REF.test(password)) {
+    ENV_REF.lastIndex = 0;
+    throw new Error(
+      "The password must be an environment reference such as ${env:SAP_A4H_PASSWORD}, not the password itself. " +
+        "This panel never stores or transports a credential."
+    );
+  }
+  ENV_REF.lastIndex = 0;
+
+  const list = rawSystems();
+  const nameAt = (i: number) => String(list[i].name ?? "").toLowerCase();
+  const existing = list.findIndex((_, i) => nameAt(i) === name.toLowerCase());
+
+  // An edit says which entry it is editing; a create does not. Without that distinction a
+  // create that reuses a name would silently overwrite a working connection.
+  let index = -1;
+  if (patch.previousName) {
+    index = list.findIndex((_, i) => nameAt(i) === patch.previousName!.toLowerCase());
+    if (index < 0) throw new Error(`No system called '${patch.previousName}' to edit.`);
+    if (existing >= 0 && existing !== index) throw new Error(`Cannot rename to '${name}': another system already uses that name.`);
+  } else if (existing >= 0) {
+    throw new Error(`A system called '${name}' already exists. Edit it, or choose another name.`);
+  }
+
+  // keep any field the panel does not own (someone may have added authType by hand)
+  const previous = index >= 0 ? list[index] : {};
+  const entry: RawSystem = { ...previous, name, url: patch.url.trim() };
+  setOrDelete(entry, "client", patch.client);
+  setOrDelete(entry, "user", patch.user);
+  setOrDelete(entry, "password", password);
+
+  if (index >= 0) list[index] = entry;
+  else list.push(entry);
+  writeJsonFile(paths().systemsFile, list);
+  return { ok: true };
+}
+
+export function deleteSystem(name: string): { ok: true } {
+  const list = rawSystems();
+  const next = list.filter((s) => String(s.name ?? "").toLowerCase() !== name.toLowerCase());
+  if (next.length === list.length) throw new Error(`No system called '${name}'.`);
+  writeJsonFile(paths().systemsFile, next);
+  return { ok: true };
+}
+
+function setOrDelete(target: RawSystem, key: string, value: string | undefined): void {
+  const v = (value ?? "").trim();
+  if (v) target[key] = v;
+  else delete target[key];
+}
+
+function assertUrl(url: string, subject: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(`'${url}' is not a URL. Use the full form, e.g. https://host:44300 (${subject}).`);
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`'${url}' must use http or https (${subject}).`);
+  }
+}
+
+// --- destinations -----------------------------------------------------------
+
+function destinationFiles(): string[] {
+  const { destinationsDir } = paths();
+  try {
+    return fs
+      .readdirSync(destinationsDir)
+      .filter((f) => f.toLowerCase().endsWith(".json"))
+      .sort()
+      .map((f) => path.join(destinationsDir, f));
+  } catch {
+    return [];
+  }
+}
+
+const pick = (raw: Record<string, unknown>, keys: string[]): string => {
+  for (const k of keys) {
+    const v = raw[k];
+    if (typeof v === "string" && v.trim()) return v.trim();
+    if (typeof v === "number") return String(v);
+  }
+  return "";
+};
+
+export function listDestinations(): { dir: string; destinations: DestinationCard[] } {
+  const { destinationsDir } = paths();
+  const cards: DestinationCard[] = [];
+  for (const file of destinationFiles()) {
+    const raw = readJsonFile<Record<string, unknown>>(file, {});
+    const headers = (raw.headers ?? raw.URLHeaders ?? raw.Headers) as Record<string, unknown> | undefined;
+    cards.push({
+      name: pick(raw, ["Name", "name"]) || path.basename(file, ".json"),
+      url: pick(raw, ["URL", "url"]),
+      authType: pick(raw, ["Authentication", "authType", "authentication"]) || "NoAuthentication",
+      proxyType: pick(raw, ["ProxyType", "proxyType"]) || undefined,
+      client: pick(raw, ["sap-client", "client"]) || undefined,
+      user: pick(raw, ["User", "user", "username"]) || undefined,
+      file,
+      secrets: SECRET_FIELDS.filter((f) => typeof raw[f] === "string" && (raw[f] as string).trim()).map((f) => {
+        const c = classify(raw[f] as string);
+        return { field: f, kind: c.kind === "none" ? "literal" : c.kind, envRefs: c.envRefs };
+      }),
+      customHeaders: headers && typeof headers === "object" ? Object.keys(headers) : []
+    });
+  }
+  return { dir: destinationsDir, destinations: cards };
+}
+
+export interface DestinationPatch {
+  name: string;
+  url: string;
+  authType: string;
+  proxyType?: string;
+  client?: string;
+  user?: string;
+  password?: string;
+  previousName?: string;
+}
+
+export function saveDestination(patch: DestinationPatch): { ok: true; file: string } {
+  const name = patch.name.trim();
+  if (!/^[A-Za-z0-9._-]+$/.test(name)) {
+    throw new Error(`'${name}' is not a usable destination name. Use letters, digits, dot, dash or underscore — it becomes the file name.`);
+  }
+  assertUrl(patch.url, name);
+  const password = (patch.password ?? "").trim();
+  if (password && !ENV_REF.test(password)) {
+    ENV_REF.lastIndex = 0;
+    throw new Error("The password must be an environment reference such as ${env:MY_PASSWORD}, not the password itself.");
+  }
+  ENV_REF.lastIndex = 0;
+
+  const { destinationsDir } = paths();
+  const file = path.join(destinationsDir, `${name}.json`);
+  const previousFile = patch.previousName ? path.join(destinationsDir, `${patch.previousName}.json`) : file;
+  // carry every field we do not own straight through, so an exported clientSecret survives an edit
+  const existing = readJsonFile<Record<string, unknown>>(previousFile, {});
+
+  const out: Record<string, unknown> = { ...existing };
+  out.Name = name;
+  out.URL = patch.url.trim();
+  out.Authentication = patch.authType;
+  setOrDelete(out, "ProxyType", patch.proxyType);
+  setOrDelete(out, "sap-client", patch.client);
+  setOrDelete(out, "User", patch.user);
+  if (password) out.Password = password;
+  // drop the lowercase twins so one destination never carries two spellings of the same field
+  for (const k of ["name", "url", "authType", "authentication", "proxyType", "client", "user", "username", "password"]) delete out[k];
+
+  writeJsonFile(file, out);
+  if (previousFile !== file && fs.existsSync(previousFile)) fs.rmSync(previousFile);
+  return { ok: true, file };
+}
+
+export function deleteDestination(name: string): { ok: true } {
+  const file = path.join(paths().destinationsDir, `${name}.json`);
+  if (!fs.existsSync(file)) throw new Error(`No destination file for '${name}'.`);
+  fs.rmSync(file);
+  return { ok: true };
+}
+
+// --- connection test --------------------------------------------------------
+
+export interface ProbeStep {
+  label: string;
+  path: string;
+  status: number | null;
+  ok: boolean;
+  detail?: string;
+}
+
+export interface ValidateResult {
+  target: string;
+  url: string;
+  tls: { trusted: boolean; subject?: string; issuer?: string; note?: string };
+  sapSystem?: string;
+  realm?: string;
+  steps: ProbeStep[];
+  verdict: string;
+}
+
+interface Probe {
+  status: number | null;
+  headers: Record<string, string>;
+  body: string;
+  error?: string;
+  cert?: { subject?: string; issuer?: string };
+}
+
+/**
+ * One request, with certificate verification reported rather than enforced.
+ *
+ * Development and training systems ship SAP's default self-signed certificate, so refusing to
+ * connect would make the panel useless exactly where it is needed. Instead the panel connects
+ * and tells the operator the certificate is not trusted, which is the fact they need.
+ */
+function request(target: string, auth: { user?: string; password?: string }, timeoutMs: number): Promise<Probe> {
+  return new Promise((resolve) => {
+    let parsed: URL;
+    try {
+      parsed = new URL(target);
+    } catch {
+      resolve({ status: null, headers: {}, body: "", error: "invalid URL" });
+      return;
+    }
+    const secure = parsed.protocol === "https:";
+    const lib = secure ? https : http;
+    const headers: Record<string, string> = { accept: "*/*" };
+    if (auth.user && auth.password) {
+      headers.authorization = `Basic ${Buffer.from(`${auth.user}:${auth.password}`).toString("base64")}`;
+    }
+    const req = lib.request(
+      target,
+      { method: "GET", headers, timeout: timeoutMs, ...(secure ? { rejectUnauthorized: false } : {}) },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (c) => chunks.length < 40 && chunks.push(c as Buffer));
+        res.on("end", () => {
+          const flat: Record<string, string> = {};
+          for (const [k, v] of Object.entries(res.headers)) flat[k] = Array.isArray(v) ? v.join(", ") : String(v ?? "");
+          let cert: { subject?: string; issuer?: string } | undefined;
+          const socket = res.socket as unknown as { getPeerCertificate?: () => Record<string, Record<string, string>> };
+          if (secure && typeof socket?.getPeerCertificate === "function") {
+            const c = socket.getPeerCertificate();
+            if (c && c.subject) cert = { subject: c.subject.CN, issuer: c.issuer?.CN ?? c.issuer?.O };
+          }
+          resolve({ status: res.statusCode ?? null, headers: flat, body: Buffer.concat(chunks).toString("utf8").slice(0, 2000), cert });
+        });
+      }
+    );
+    req.on("timeout", () => {
+      req.destroy();
+      resolve({ status: null, headers: {}, body: "", error: `no answer within ${timeoutMs} ms` });
+    });
+    req.on("error", (e) => resolve({ status: null, headers: {}, body: "", error: e.message }));
+    req.end();
+  });
+}
+
+/**
+ * Ask the certificate directly, once, before any request.
+ *
+ * Doing this as a race alongside the real request reported "trusted" whenever the verifying
+ * connection had not failed *yet* — a false clean bill of health on exactly the systems that
+ * carry SAP's self-signed default certificate. One handshake answers both questions at once:
+ * `authorized` is the verdict, and the peer certificate is readable either way.
+ */
+function checkTls(target: string, timeoutMs: number): Promise<ValidateResult["tls"]> {
+  return new Promise((resolve) => {
+    let parsed: URL;
+    try {
+      parsed = new URL(target);
+    } catch {
+      resolve({ trusted: true });
+      return;
+    }
+    if (parsed.protocol !== "https:") {
+      resolve({ trusted: true, note: "Plain HTTP: nothing is encrypted in transit." });
+      return;
+    }
+    const socket = tls.connect(
+      { host: parsed.hostname, port: Number(parsed.port || 443), servername: parsed.hostname, rejectUnauthorized: false, timeout: timeoutMs },
+      () => {
+        const cert = socket.getPeerCertificate();
+        const trusted = socket.authorized;
+        // a distinguished-name field can legitimately repeat, so it may arrive as an array
+        const one = (v: unknown): string | undefined => (Array.isArray(v) ? v[0] : typeof v === "string" ? v : undefined);
+        const out: ValidateResult["tls"] = {
+          trusted,
+          subject: one(cert?.subject?.CN),
+          issuer: one(cert?.issuer?.CN) ?? one(cert?.issuer?.O)
+        };
+        if (!trusted) {
+          out.note =
+            `Certificate not trusted (${socket.authorizationError ?? "verification failed"}). Normal on a development system carrying SAP's default certificate; ` +
+            "the panel connected without verifying it, and the MCP server needs NODE_TLS_REJECT_UNAUTHORIZED=0 or a trusted certificate to reach it.";
+        }
+        socket.destroy();
+        resolve(out);
+      }
+    );
+    socket.on("timeout", () => { socket.destroy(); resolve({ trusted: false, note: "TLS handshake timed out." }); });
+    socket.on("error", (e) => resolve({ trusted: false, note: `TLS handshake failed: ${e.message}` }));
+  });
+}
+
+/** Pull the readable sentence out of an SAP error page or OData error payload. */
+function sapMessage(body: string): string | undefined {
+  const odata = /"message"\s*:\s*(?:"([^"]{4,300})"|\{[^}]*"value"\s*:\s*"([^"]{4,300})")/.exec(body);
+  if (odata) return (odata[1] ?? odata[2])?.trim();
+  const text = body.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  const known = /(Anmeldung fehlgeschlagen|Logon failed|No authorization[^.]*|not authorized[^.]*)/i.exec(text);
+  return known ? known[1] : undefined;
+}
+
+/**
+ * Walk a target from "is anything there" to "can I read a service", stopping at the first
+ * answer that settles it. Each step reports what SAP said, because "401" alone is what cost
+ * hours: the useful part is the realm naming the system, or the message naming the reason.
+ */
+export async function validateSystem(name: string, servicePath?: string, timeoutMs = 20000): Promise<ValidateResult> {
+  const config: AppConfig = loadConfig([]);
+  const system = config.sapSystems.find((s) => s.name.toLowerCase() === name.toLowerCase());
+  if (!system) throw new Error(`No system called '${name}'. Save it first.`);
+  return validateTarget(system, servicePath, timeoutMs);
+}
+
+export async function validateTarget(system: SapSystem, servicePath: string | undefined, timeoutMs: number): Promise<ValidateResult> {
+  const base = system.url.replace(/\/$/, "");
+  const clientParam = system.client ? `?sap-client=${encodeURIComponent(system.client)}` : "";
+  const auth = { user: system.user, password: system.password };
+  const steps: ProbeStep[] = [];
+  const result: ValidateResult = { target: system.name, url: base, tls: await checkTls(base, timeoutMs), steps, verdict: "" };
+
+  const run = async (label: string, rel: string, withAuth: boolean) => {
+    const probe = await request(`${base}${rel}`, withAuth ? auth : {}, timeoutMs);
+    result.sapSystem ??= probe.headers["sap-system"];
+    const realm = /realm="([^"]+)"/.exec(probe.headers["www-authenticate"] ?? "");
+    if (realm) result.realm ??= realm[1];
+    const step: ProbeStep = {
+      label,
+      path: rel,
+      status: probe.status,
+      ok: probe.status !== null && probe.status < 400,
+      detail: probe.error ?? sapMessage(probe.body)
+    };
+    steps.push(step);
+    return step;
+  };
+
+  const reach = await run("Host reachable", `/sap/public/ping`, false);
+  if (reach.status === null) {
+    result.verdict = `No answer from ${base}. Check host and port — an SAP HTTPS port is usually 443NN, while 32NN is the SAP GUI dispatcher and does not speak HTTP.`;
+    return result;
+  }
+
+  if (!system.user || !system.password) {
+    result.verdict = system.user
+      ? "No password resolved. If it is written as ${env:NAME}, that variable is empty in the process running this panel."
+      : "Reachable, but no user is configured, so only anonymous endpoints were tried.";
+    return result;
+  }
+
+  const logon = await run("Credentials accepted", `/sap/bc/ping${clientParam}`, true);
+  if (logon.status === 401) {
+    result.verdict =
+      `Logon rejected by ${result.realm ?? "the server"}. The credentials are wrong for this system or client` +
+      (result.sapSystem ? `, which identifies itself as ${result.sapSystem}` : "") +
+      ". Check that the user exists in this client, and that an initial password has already been changed.";
+    return result;
+  }
+  if (!logon.ok) {
+    result.verdict = `Logon endpoint answered HTTP ${logon.status}${logon.detail ? `: ${logon.detail}` : ""}.`;
+    return result;
+  }
+
+  if (servicePath) {
+    const meta = await run("Service metadata", `${servicePath.replace(/\/$/, "")}/$metadata${clientParam}`, true);
+    if (meta.status === 403) {
+      result.verdict = `Logon works, but this user may not start that service${meta.detail ? `: ${meta.detail}` : "."}`;
+      return result;
+    }
+    result.verdict = meta.ok
+      ? `Working: logon accepted and $metadata readable${result.sapSystem ? ` on ${result.sapSystem}` : ""}.`
+      : `Logon works; the service answered HTTP ${meta.status}${meta.detail ? `: ${meta.detail}` : ""}.`;
+    return result;
+  }
+
+  result.verdict = `Logon accepted${result.sapSystem ? ` on ${result.sapSystem}` : ""}. Add a service path to check a concrete OData service.`;
+  return result;
+}
+
+/** Everything the page renders in one call. */
+export function state(): {
+  systems: ReturnType<typeof listSystems>;
+  destinations: ReturnType<typeof listDestinations>;
+  warnings: string[];
+  dataDir: string;
+} {
+  const config = loadConfig([]);
+  return { systems: listSystems(), destinations: listDestinations(), warnings: config.configWarnings, dataDir: config.dataDir };
+}
+
+/** Resolve a `${env:NAME}` the way the server will, to show whether it is actually set. */
+export function envStatus(names: string[]): Record<string, boolean> {
+  const out: Record<string, boolean> = {};
+  for (const n of names) out[n] = expandEnvRefs(`\${env:${n}}`) !== "";
+  return out;
+}

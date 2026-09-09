@@ -229,6 +229,34 @@ docker run -i --rm sap-fiori-mcp-server
 | `get_btp_destination` | Detalles de un destination (URL, auth, sap-client, headers) con secretos redactados y preview de la autenticación resuelta. |
 | `query_odata_data` | Ejecuta una query OData V2/V4 contra un entity set vía `destination` BTP, `systemName` de `list_sap_systems` o `serviceUrl` directa. Soporta `$filter`, `$top`, `$skip`, `$select`, `$orderby`, `$expand` y el total de filas (`$count` en V4, `$inlinecount` en V2, con detección automática). Es la contraparte remota de `query_cap_data`. |
 
+## 🖥️ Panel de conexiones
+
+```bash
+npx @pired/sap-fiori-mcp-server --admin
+```
+
+Abre un panel local para dar de alta, editar, renombrar y borrar sistemas SAP y destinations BTP,
+y **probar cada conexión** antes de usarla: alcance del host, aceptación de credenciales y lectura
+de `$metadata`, mostrando el código HTTP, el sistema que responde (`sap-system`), el realm y el
+mensaje real de SAP. También informa de si el certificado TLS es de confianza y de qué variables
+`${env:...}` no están definidas.
+
+Cuatro cosas lo mantienen a raya:
+
+- Escucha **solo en `127.0.0.1`**; no existe opción para cambiarlo.
+- Exige un **token generado en cada arranque**, impreso una vez en consola y enviado en cabecera.
+- **No usa cookies**, así que otra pestaña no puede lograr que el navegador se autentique sola.
+- Rechaza cualquier petición cuyo `Host` no nombre al loopback, que es lo que cierra el
+  DNS-rebinding desde el propio navegador del operador.
+
+Y la regla que lo sostiene: **ningún secreto entra ni sale**. La contraseña solo se acepta como
+`${env:NOMBRE}`; los secretos que ya estuvieran literales en un fichero de destination se
+conservan intactos al editar, pero nunca se devuelven.
+
+| Variable | Por defecto | Descripción |
+|---|---|---|
+| `SAP_FIORI_MCP_ADMIN_PORT` | `7392` | Puerto del panel (también con `--port`). |
+
 ## 🔧 Variables de entorno
 
 | Variable | Default | Descripción |
@@ -352,7 +380,7 @@ sap-fiori-mcp-server/
 ```bash
 npm run build       # tsc → dist/
 npm run typecheck   # tsc --noEmit
-npm test            # vitest run (131 tests)
+npm test            # vitest run (148 tests)
 npm run test:watch  # vitest watch
 ```
 

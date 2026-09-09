@@ -1,6 +1,6 @@
 {
   "name": "@pired/sap-fiori-mcp-server",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "description": "Unified Model Context Protocol (MCP) server for SAP Fiori development: Fiori Elements app generation (5 floorplans), UI5 metadata & tooling, CAP/CDS model introspection and SAP BTP destinations connectivity (OData V2/V4 queries). Inspired by @sap-ux/fiori-mcp-server, @ui5/mcp-server and @cap-js/mcp-server. Zero SAP dependencies.",
   "license": "MIT",
   "type": "module",
@@ -28,6 +28,7 @@
     "prepublishOnly": "npm run typecheck && npm run build && npm test",
     "start": "node dist/index.js",
     "start:http": "node dist/index.js --http --port 3001",
+    "admin": "node dist/index.js --admin",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit"

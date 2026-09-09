@@ -4,6 +4,7 @@ import { loadConfig, SERVER_NAME, SERVER_VERSION } from "./config.js";
 import { initLogger, logger } from "./logger.js";
 import { createMcpServer } from "./server.js";
 import { startHttpServer } from "./http.js";
+import { startAdminServer } from "./admin/server.js";
 
 function printHelp(): void {
   process.stdout.write(
@@ -15,6 +16,7 @@ Usage:
   sap-fiori-mcp [options]
 
 Options:
+  --admin           Open the local connection admin panel (127.0.0.1 only) and exit
   --http            Run with HTTP Streamable transport instead of stdio
   --port <n>        HTTP port (default 3001 or SAP_FIORI_MCP_PORT)
   --host <addr>     HTTP bind address (default 127.0.0.1)
@@ -40,6 +42,11 @@ MCP endpoints:
   );
 }
 
+function flagValue(argv: string[], flag: string, fallback: string): string {
+  const i = argv.indexOf(flag);
+  return i >= 0 && argv[i + 1] ? argv[i + 1] : fallback;
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   if (argv.includes("--help") || argv.includes("-h")) {
@@ -53,6 +60,19 @@ async function main(): Promise<void> {
 
   const config = loadConfig(argv);
   initLogger(config);
+
+  if (argv.includes("--admin")) {
+    const admin = await startAdminServer(Number(flagValue(argv, "--port", process.env.SAP_FIORI_MCP_ADMIN_PORT ?? "7392")));
+    // the token is printed once and never stored; closing this process invalidates it
+    process.stdout.write(`
+Connection admin panel ready — open this exact link (it carries a one-time token):
+
+  ${admin.url}
+
+It listens on 127.0.0.1 only. Press Ctrl+C to stop.
+`);
+    return;
+  }
   logger.info("starting", { transport: config.transport, port: config.httpPort, workspace: config.workspaceRoot });
 
   if (config.transport === "http") {
