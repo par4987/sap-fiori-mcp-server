@@ -139,6 +139,43 @@ async function exchange(key: ParsedServiceKey, code: string, verifier: string, r
   return { refreshToken: json.refresh_token, accessToken: json.access_token ?? "", expiresInSeconds: json.expires_in ?? 0 };
 }
 
+/**
+ * Spend a refresh token on an access token, which is the only way to know it is still good.
+ *
+ * A stored token looks identical whether it works or expired last week; the tenant decides, and
+ * only the token endpoint can say. This is what the panel's validate button asks.
+ */
+export async function exchangeRefreshToken(
+  key: ParsedServiceKey,
+  refreshToken: string,
+  timeoutMs = 20000
+): Promise<{ accessToken: string; expiresInSeconds: number }> {
+  const res = await fetch(`${key.tokenUrl}/oauth/token`, {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "content-type": "application/x-www-form-urlencoded",
+      authorization: `Basic ${Buffer.from(`${key.clientId}:${key.clientSecret}`).toString("base64")}`
+    },
+    body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken }).toString(),
+    signal: AbortSignal.timeout(timeoutMs)
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    let detail = text.slice(0, 240);
+    try {
+      const parsed = JSON.parse(text) as { error?: string; error_description?: string };
+      detail = parsed.error_description ?? parsed.error ?? detail;
+    } catch {
+      /* keep the raw body */
+    }
+    throw new Error(`The UAA refused the refresh token (HTTP ${res.status}): ${detail}`);
+  }
+  const json = JSON.parse(text) as { access_token?: string; expires_in?: number };
+  if (!json.access_token) throw new Error("The UAA answered without an access token.");
+  return { accessToken: json.access_token, expiresInSeconds: json.expires_in ?? 0 };
+}
+
 export function loginWithBrowser(key: ParsedServiceKey, opts: LoginOptions = {}): Promise<LoginResult> {
   const timeoutMs = (opts.timeoutSeconds ?? 300) * 1000;
   const { verifier, challenge } = pkce();

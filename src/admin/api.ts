@@ -22,6 +22,8 @@ import { loadConfig } from "../config.js";
 import { stripBom } from "../util/fs.js";
 import { expandEnvRefs } from "../util/envref.js";
 import { describeServiceKey, readServiceKeyFile } from "../btp/service-key.js";
+import { exchangeRefreshToken, loginWithBrowser } from "../btp/login.js";
+import { describeStoredToken, forgetRefreshToken, readRefreshToken, saveRefreshToken } from "../btp/token-store.js";
 import { buildAuthHeaders, findDestination } from "./../btp/destinations.js";
 
 export interface EnvRef {
@@ -614,6 +616,94 @@ export async function validateDestination(name: string, servicePath?: string, ti
     result.verdict = `Token obtained; the endpoint answered HTTP ${call.status}.`;
   }
   return result;
+}
+
+// --- the BTP token behind a destination -------------------------------------
+
+export interface TokenStatus {
+  destination: string;
+  serviceKeyPath?: string;
+  keyError?: string;
+  identityProvider?: string;
+  stored: boolean;
+  sealed?: "dpapi" | "plain";
+  storedAt?: string;
+  /** Present after a validate: what the tenant said about the token. */
+  valid?: boolean;
+  detail?: string;
+  expiresInSeconds?: number;
+}
+
+function destinationKey(name: string) {
+  const config = loadConfig([]);
+  const found = loadDestinationsForPanel().find((d) => d.name.toLowerCase() === name.toLowerCase());
+  if (!found) throw new Error(`No destination called '${name}'.`);
+  if (!found.serviceKeyPath) {
+    throw new Error(`Destination '${found.name}' has no service key, so it has no BTP token to manage.`);
+  }
+  return { config, destination: found, key: readServiceKeyFile(found.serviceKeyPath) };
+}
+
+/** The destination cards, read straight from disk so the panel never works from a stale copy. */
+function loadDestinationsForPanel() {
+  return listDestinations().destinations.map((d) => ({ name: d.name, serviceKeyPath: d.serviceKey?.path }));
+}
+
+export function tokenStatus(name: string): TokenStatus {
+  const config = loadConfig([]);
+  const card = listDestinations().destinations.find((d) => d.name.toLowerCase() === name.toLowerCase());
+  if (!card) throw new Error(`No destination called '${name}'.`);
+  const stored = describeStoredToken(config.dataDir, card.name);
+  return {
+    destination: card.name,
+    serviceKeyPath: card.serviceKey?.path,
+    keyError: card.serviceKey && !card.serviceKey.ok ? card.serviceKey.detail : undefined,
+    stored: stored.stored,
+    sealed: stored.kind,
+    storedAt: stored.storedAt
+  };
+}
+
+/** Ask the tenant whether the stored token still works, which is the only authority on it. */
+export async function tokenValidate(name: string): Promise<TokenStatus> {
+  const status = tokenStatus(name);
+  const { config, key } = destinationKey(name);
+  const token = readRefreshToken(config.dataDir, status.destination);
+  if (!token) {
+    return { ...status, valid: false, detail: "No token is stored for this destination yet. Sign in once to obtain one." };
+  }
+  try {
+    const result = await exchangeRefreshToken(key, token);
+    return { ...status, valid: true, expiresInSeconds: result.expiresInSeconds, detail: `The tenant issued an access token valid for ${Math.round(result.expiresInSeconds / 60)} minutes.` };
+  } catch (e) {
+    return { ...status, valid: false, detail: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/**
+ * Sign in from the panel.
+ *
+ * The browser opens on this machine, which is where the operator already is — the panel binds to
+ * loopback, so there is nowhere else it could be. The token is stored the same way `--btp-login`
+ * stores it, and no part of it is returned to the page.
+ */
+export async function tokenLogin(name: string): Promise<TokenStatus & { identityProvider?: string }> {
+  const { config, key } = destinationKey(name);
+  let idp: string | undefined;
+  const result = await loginWithBrowser(key, { timeoutSeconds: 300, onIdentityProvider: (host) => (idp = host) });
+  const saved = saveRefreshToken(config.dataDir, name, result.refreshToken);
+  return {
+    ...tokenStatus(name),
+    identityProvider: idp,
+    valid: true,
+    sealed: saved.kind,
+    detail: `Signed in and stored${idp ? ` after ${idp}` : ""}. Nothing else has to be configured.`
+  };
+}
+
+export function tokenForget(name: string): { removed: boolean } {
+  const config = loadConfig([]);
+  return { removed: forgetRefreshToken(config.dataDir, name) };
 }
 
 /** Everything the page renders in one call. */

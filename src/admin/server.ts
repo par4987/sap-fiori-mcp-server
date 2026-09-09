@@ -82,6 +82,10 @@ const ROUTES: Record<string, Handler> = {
       previousName: opt(b.previousName)
     }),
   "/api/service-key/inspect": (b) => api.inspectServiceKey(str(b.path, "path")),
+  "/api/token/status": (b) => api.tokenStatus(str(b.name, "name")),
+  "/api/token/validate": (b) => api.tokenValidate(str(b.name, "name")),
+  "/api/token/login": (b) => api.tokenLogin(str(b.name, "name")),
+  "/api/token/forget": (b) => api.tokenForget(str(b.name, "name")),
   "/api/destinations/delete": (b) => api.deleteDestination(str(b.name, "name")),
   "/api/validate": (b) =>
     opt(b.kind) === "destination"

@@ -237,3 +237,95 @@ describe("testing a destination", () => {
     await expect(api.validateDestination("NOPE")).rejects.toThrow(/No destination called 'NOPE'/);
   });
 });
+
+// The other SAP client grew a "BTP token" button because a stored token is invisible until it
+// fails: it looks identical whether it works or expired last week, and only the tenant knows.
+describe("managing the BTP token of a destination", () => {
+  const withKey = (over: Record<string, unknown> = {}) => {
+    const keyFile = path.join(dir, "key.json");
+    fs.writeFileSync(
+      keyFile,
+      JSON.stringify({ url: "https://abap.example", systemid: "TRL", uaa: { clientid: "c", clientsecret: "s", url: "https://uaa.example" } })
+    );
+    const d = path.join(dir, "destinations");
+    fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, "BTP.json"), JSON.stringify({ Name: "BTP", Authentication: "OAuth2RefreshToken", serviceKeyPath: keyFile, ...over }));
+    return keyFile;
+  };
+
+  it("reports that nothing is stored yet, rather than an obscure failure later", async () => {
+    withKey();
+    const status = api.tokenStatus("BTP");
+    expect(status.stored).toBe(false);
+    const validated = await api.tokenValidate("BTP");
+    expect(validated.valid).toBe(false);
+    expect(validated.detail).toContain("Sign in once");
+  });
+
+  it("refuses to manage a token for a destination that has no service key", () => {
+    const d = path.join(dir, "destinations");
+    fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, "PLAIN.json"), JSON.stringify({ Name: "PLAIN", URL: "https://x", Authentication: "BasicAuthentication" }));
+    expect(() => api.tokenStatus("PLAIN")).not.toThrow();
+    return expect(api.tokenValidate("PLAIN")).rejects.toThrow(/no service key/);
+  });
+
+  it("asks the tenant, and reports what it answered", async () => {
+    withKey();
+    const { saveRefreshToken } = await import("../src/btp/token-store.js");
+    saveRefreshToken(dir, "BTP", "a-stored-token");
+
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).includes("/oauth/token")) {
+        const body = new URLSearchParams(String(init?.body ?? ""));
+        expect(body.get("grant_type")).toBe("refresh_token");
+        expect(body.get("refresh_token")).toBe("a-stored-token");
+        return new Response(JSON.stringify({ access_token: "at", expires_in: 1800 }), { status: 200 });
+      }
+      return original(input as string, init);
+    }) as typeof fetch;
+
+    try {
+      const validated = await api.tokenValidate("BTP");
+      expect(validated.valid).toBe(true);
+      expect(validated.expiresInSeconds).toBe(1800);
+      expect(validated.detail).toContain("30 minutes");
+      // the answer describes the token; it never carries it
+      expect(JSON.stringify(validated)).not.toContain("a-stored-token");
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it("says plainly when the tenant refuses the token", async () => {
+    withKey();
+    const { saveRefreshToken } = await import("../src/btp/token-store.js");
+    saveRefreshToken(dir, "BTP", "expired");
+
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).includes("/oauth/token")) {
+        return new Response(JSON.stringify({ error: "invalid_token", error_description: "Invalid refresh token" }), { status: 401 });
+      }
+      return original(input as string, init);
+    }) as typeof fetch;
+
+    try {
+      const validated = await api.tokenValidate("BTP");
+      expect(validated.valid).toBe(false);
+      expect(validated.detail).toContain("Invalid refresh token");
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it("forgets a token on request", async () => {
+    withKey();
+    const { saveRefreshToken } = await import("../src/btp/token-store.js");
+    saveRefreshToken(dir, "BTP", "t");
+    expect(api.tokenStatus("BTP").stored).toBe(true);
+    expect(api.tokenForget("BTP")).toEqual({ removed: true });
+    expect(api.tokenStatus("BTP").stored).toBe(false);
+  });
+});

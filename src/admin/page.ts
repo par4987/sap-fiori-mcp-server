@@ -93,6 +93,17 @@ export const PAGE = /* html */ `<!doctype html>
   </section>
 </main>
 
+<dialog id="tokdlg">
+  <h2 id="tokTitle"></h2>
+  <div id="tokBody"></div>
+  <div class="row" style="margin-top:16px; justify-content:flex-end">
+    <button onclick="tokAction('validate')">Validar</button>
+    <button class="primary" onclick="tokAction('login')">Iniciar sesión</button>
+    <button class="danger" onclick="tokAction('forget')">Olvidar</button>
+    <button onclick="document.getElementById('tokdlg').close()">Cerrar</button>
+  </div>
+</dialog>
+
 <dialog id="dlg"><form method="dialog" id="form">
   <h2 id="dlgTitle"></h2>
   <div class="grid">
@@ -178,7 +189,9 @@ async function refresh() {
     return '<tr><td><strong>' + esc(d.name) + '</strong>' +
       (d.proxyType && d.proxyType !== 'Internet' ? '<span class="sub">' + esc(d.proxyType) + '</span>' : '') +
       '</td><td class="url mono">' + esc(d.url) + '</td><td>' + esc(d.authType) + '</td><td>' + creds +
-      '</td><td class="actions"><button onclick="editDest(' + i + ')">Editar</button>' +
+      '</td><td class="actions">' +
+      (d.serviceKey ? '<button onclick="openToken(&quot;' + esc(d.name) + '&quot;)">Token BTP</button>' : '') +
+      '<button onclick="editDest(' + i + ')">Editar</button>' +
       '<button class="danger" onclick="delDest(&quot;' + esc(d.name) + '&quot;)">Borrar</button></td></tr>';
   }).join('') || '<tr><td colspan="5" class="dim">Ningún destination configurado.</td></tr>';
 
@@ -219,6 +232,47 @@ $('form').addEventListener('submit', async (ev) => {
     $('dlg').close(); await refresh();
   } catch (e) { $('formErr').textContent = e.message; }
 });
+
+let tokenFor = null;
+
+function renderToken(t) {
+  const line = (label, value, cls) => '<div class="step"><span class="pill ' + (cls || '') + '">' + label + '</span><span>' + value + '</span></div>';
+  let html = '<div class="result">';
+  html += line(t.stored ? 'guardado' : 'sin token', t.stored
+    ? 'sellado: ' + esc(t.sealed || '?') + (t.storedAt ? ' · ' + new Date(t.storedAt).toLocaleString() : '')
+    : 'todavía no se ha iniciado sesión para este destination', t.stored ? 'ok' : 'warn');
+  if (t.serviceKeyPath) html += line('service key', '<span class="mono">' + esc(t.serviceKeyPath) + '</span>');
+  if (t.keyError) html += line('problema', esc(t.keyError), 'bad');
+  if (t.identityProvider) html += line('proveedor', esc(t.identityProvider));
+  if (t.valid !== undefined) html += line(t.valid ? 'válido' : 'no válido', esc(t.detail || ''), t.valid ? 'ok' : 'bad');
+  else if (t.detail) html += line('nota', esc(t.detail));
+  html += '</div>';
+  document.getElementById('tokBody').innerHTML = html;
+}
+
+async function openToken(name) {
+  tokenFor = name;
+  document.getElementById('tokTitle').textContent = 'Token BTP · ' + name;
+  document.getElementById('tokBody').innerHTML = '<div class="result dim">consultando…</div>';
+  document.getElementById('tokdlg').showModal();
+  try { renderToken(await call('/api/token/status', { name })); }
+  catch (e) { document.getElementById('tokBody').innerHTML = '<div class="err">' + esc(e.message) + '</div>'; }
+}
+
+async function tokAction(what) {
+  if (!tokenFor) return;
+  const waiting = { validate: 'validando contra el tenant…', login: 'se ha abierto el navegador; termina el login ahí…', forget: 'borrando…' }[what];
+  document.getElementById('tokBody').innerHTML = '<div class="result dim">' + waiting + '</div>';
+  try {
+    if (what === 'forget') {
+      await call('/api/token/forget', { name: tokenFor });
+      renderToken(await call('/api/token/status', { name: tokenFor }));
+    } else {
+      renderToken(await call('/api/token/' + what, { name: tokenFor }));
+    }
+    await refresh();
+  } catch (e) { document.getElementById('tokBody').innerHTML = '<div class="err">' + esc(e.message) + '</div>'; }
+}
 
 async function inspectKey() {
   const path = $('f_key').value.trim();

@@ -241,6 +241,11 @@ de `$metadata`, mostrando el código HTTP, el sistema que responde (`sap-system`
 mensaje real de SAP. También informa de si el certificado TLS es de confianza y de qué variables
 `${env:...}` no están definidas.
 
+Los destinations con service key traen además un botón **Token BTP**: dice si hay token guardado y
+cómo está sellado, lo **valida contra el tenant** (gastándolo en un access token, que es la única
+autoridad sobre si sigue vivo), permite iniciar sesión desde ahí mismo y olvidarlo. Un token
+guardado es invisible hasta que falla: se ve igual funcionando que caducado.
+
 Cuatro cosas lo mantienen a raya:
 
 - Escucha **solo en `127.0.0.1`**; no existe opción para cambiarlo.
@@ -428,7 +433,7 @@ sap-fiori-mcp-server/
 ```bash
 npm run build       # tsc → dist/
 npm run typecheck   # tsc --noEmit
-npm test            # vitest run (188 tests)
+npm test            # vitest run (193 tests)
 npm run test:watch  # vitest watch
 ```
 
