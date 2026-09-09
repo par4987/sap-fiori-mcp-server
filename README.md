@@ -310,7 +310,14 @@ Para OAuth2: `{ "name": "SFSF", "authType": "OAuth2ClientCredentials", "clientId
 
 ### 2. BTP Destination Service (nube)
 
-Configura las credenciales del servicio (service key) y el servidor leerá los destinations del subaccount directamente:
+Lo más simple es apuntar al fichero de **service key** tal como se descarga del cockpit, sin repartir sus campos:
+
+```bash
+export BTP_SERVICE_KEY_FILE=/ruta/a/destination-key.json
+```
+
+Se leen de él `clientid`, `clientsecret`, la URL de UAA (`url`) y la API de destinations (`uri`). El fichero se queda
+donde está: el secreto no se copia a ninguna otra parte. Si prefieres las variables sueltas, siguen funcionando:
 
 ```bash
 export BTP_CLIENT_ID="sb-..."
@@ -319,6 +326,16 @@ export BTP_TOKEN_URL="https://subaccount.authentication.eu10.hana.ondemand.com"
 export BTP_DESTINATION_API_URL="https://destination-configuration.cfapps.eu10.hana.ondemand.com"
 # Alternativa: detección automática desde VCAP_SERVICES (deploy en CF/Kyma)
 ```
+
+Un **destination OAuth** también puede apuntar a su service key en lugar de deletrear las credenciales:
+
+```json
+{ "Name": "TRL", "Authentication": "OAuth2ClientCredentials",
+  "serviceKeyPath": "/ruta/a/abap-key.json" }
+```
+
+Se entienden las tres formas que emite BTP: la del Destination service (`uri` + `url`), la de ABAP Environment
+(credenciales bajo `uaa`, y de la que se toma también la URL del sistema) y la de XSUAA.
 
 Si el Destination Service devuelve tokens pre-intercambiados (`authTokens`), se usan tal cual — así destinations OAuth2 o On-Premise funcionan sin exponer secretos.
 
@@ -380,7 +397,7 @@ sap-fiori-mcp-server/
 ```bash
 npm run build       # tsc → dist/
 npm run typecheck   # tsc --noEmit
-npm test            # vitest run (148 tests)
+npm test            # vitest run (160 tests)
 npm run test:watch  # vitest watch
 ```
 

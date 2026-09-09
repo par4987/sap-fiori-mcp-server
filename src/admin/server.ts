@@ -78,8 +78,10 @@ const ROUTES: Record<string, Handler> = {
       client: opt(b.client),
       user: opt(b.user),
       password: opt(b.password),
+      serviceKeyPath: opt(b.serviceKeyPath),
       previousName: opt(b.previousName)
     }),
+  "/api/service-key/inspect": (b) => api.inspectServiceKey(str(b.path, "path")),
   "/api/destinations/delete": (b) => api.deleteDestination(str(b.name, "name")),
   "/api/validate": (b) => api.validateSystem(str(b.name, "name"), opt(b.servicePath))
 };

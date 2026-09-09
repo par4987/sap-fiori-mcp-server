@@ -23,6 +23,7 @@ import type { AppConfig, SapSystem } from "../config.js";
 import { logger } from "../logger.js";
 import { stripBom } from "../util/fs.js";
 import { expandEnvRefsDeep } from "../util/envref.js";
+import { readServiceKeyFile } from "./service-key.js";
 import { resolveSystem } from "../odata/client.js";
 
 export type DestinationAuthType =
@@ -51,6 +52,8 @@ export interface BtpDestination {
   tokenServicePassword?: string;
   userToken?: string;
   headers?: Record<string, string>;
+  /** Service key file this destination took its OAuth credentials from, when it used one. */
+  serviceKeyPath?: string;
   source: DestinationSource;
 }
 
@@ -96,21 +99,35 @@ export function normalizeDestination(raw: Record<string, unknown>, source: Desti
       if (typeof v === "string" || typeof v === "number") customHeaders[k] = String(v);
     }
   }
+  // A service key answers every OAuth question at once, so it wins over hand-typed fields and
+  // keeps the client secret in the key file instead of in this destination.
+  const serviceKeyPath = pick(raw, ["serviceKeyPath", "ServiceKeyPath", "serviceKeyFile", "servicekeypath"]);
+  let fromKey: { clientId?: string; clientSecret?: string; tokenServiceUrl?: string; url?: string } = {};
+  if (serviceKeyPath) {
+    try {
+      const key = readServiceKeyFile(serviceKeyPath);
+      fromKey = { clientId: key.clientId, clientSecret: key.clientSecret, tokenServiceUrl: key.tokenUrl, url: key.endpointUrl };
+    } catch (e) {
+      logger.warn("destination service key could not be read", { name, serviceKeyPath, error: String(e) });
+    }
+  }
+
   return {
     name,
-    url: pick(raw, ["URL", "url", "Uri", "uri"]),
+    url: pick(raw, ["URL", "url", "Uri", "uri"]) || fromKey.url || "",
     authType,
     proxyType: pick(raw, ["ProxyType", "proxyType"]) || undefined,
     username: pick(raw, ["User", "user", "username", "Username"]) || undefined,
     password: pick(raw, ["Password", "password"]) || undefined,
     client: pick(raw, ["sap-client", "client", "SAPClient"]) || undefined,
-    clientId: pick(raw, ["clientId", "clientid", "ClientID"]) || undefined,
-    clientSecret: pick(raw, ["clientSecret", "clientsecret", "ClientSecret"]) || undefined,
-    tokenServiceUrl: pick(raw, ["tokenServiceURL", "tokenServiceUrl", "token_service_url", "tokenUrl"]) || undefined,
+    clientId: fromKey.clientId || pick(raw, ["clientId", "clientid", "ClientID"]) || undefined,
+    clientSecret: fromKey.clientSecret || pick(raw, ["clientSecret", "clientsecret", "ClientSecret"]) || undefined,
+    tokenServiceUrl: fromKey.tokenServiceUrl || pick(raw, ["tokenServiceURL", "tokenServiceUrl", "token_service_url", "tokenUrl"]) || undefined,
     tokenServiceUser: pick(raw, ["tokenServiceUser", "tokenServiceUsername"]) || undefined,
     tokenServicePassword: pick(raw, ["tokenServicePassword", "tokenServiceUserPassword"]) || undefined,
     userToken: pick(raw, ["userToken", "user_token", "bearerToken"]) || process.env.BTP_USER_TOKEN?.trim() || undefined,
     headers: Object.keys(customHeaders).length ? customHeaders : undefined,
+    serviceKeyPath: serviceKeyPath || undefined,
     source
   };
 }
@@ -206,6 +223,7 @@ export function redactDestination(d: BtpDestination): Record<string, unknown> {
     tokenServicePassword: d.tokenServicePassword ? REDACTED : undefined,
     userToken: d.userToken ? REDACTED : undefined,
     customHeaders: d.headers ? Object.keys(d.headers) : [],
+    serviceKeyPath: d.serviceKeyPath,
     source: d.source
   };
 }
@@ -216,6 +234,18 @@ export function redactDestination(d: BtpDestination): Record<string, unknown> {
 
 /** Resolve the BTP Destination Service config from env vars or VCAP_SERVICES. Returns null when absent. */
 export function getDestinationServiceConfig(): DestinationServiceConfig | null {
+  // The whole key in one variable beats four variables the operator has to split by hand.
+  const keyFile = process.env.BTP_SERVICE_KEY_FILE?.trim();
+  if (keyFile) {
+    try {
+      const key = readServiceKeyFile(keyFile);
+      if (key.apiUrl) return { apiUrl: key.apiUrl, tokenUrl: key.tokenUrl, clientId: key.clientId, clientSecret: key.clientSecret };
+      logger.warn("BTP_SERVICE_KEY_FILE is not a destination service key (no 'uri' field)", { keyFile, kind: key.kind });
+    } catch (e) {
+      logger.warn("BTP_SERVICE_KEY_FILE could not be read", { keyFile, error: String(e) });
+    }
+  }
+
   const apiUrl = process.env.BTP_DESTINATION_API_URL?.trim();
   const tokenUrl = process.env.BTP_TOKEN_URL?.trim();
   const clientId = process.env.BTP_CLIENT_ID?.trim();

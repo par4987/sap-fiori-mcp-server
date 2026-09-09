@@ -75,6 +75,13 @@ export const PAGE = /* html */ `<!doctype html>
   </section>
 
   <section>
+    <h2>Destination Service (nube)</h2>
+    <div id="dsvc"></div>
+    <p class="hint">Se configura con <code>BTP_SERVICE_KEY_FILE</code> apuntando al fichero de service key
+      descargado del cockpit. No hace falta repartir sus campos en variables sueltas.</p>
+  </section>
+
+  <section>
     <h2>Probar una conexión</h2>
     <div class="grid">
       <div><label>Sistema</label><select id="testName"></select></div>
@@ -98,10 +105,18 @@ export const PAGE = /* html */ `<!doctype html>
       <option>OAuth2ClientCredentials</option><option>OAuth2UserTokenExchange</option><option>OAuth2JWTBearer</option>
     </select></div>
     <div id="wrap_proxy" hidden><label>ProxyType</label><select id="f_proxy"><option>Internet</option><option>OnPremise</option></select></div>
+    <div style="grid-column:1/-1" id="wrap_key" hidden>
+      <label>Service key (ruta al fichero JSON descargado del cockpit)</label>
+      <div class="row"><input id="f_key" class="mono" placeholder="C:/Users/tu-usuario/Downloads/destination-key.json" style="flex:1">
+      <button type="button" onclick="inspectKey()">Analizar</button></div>
+      <div id="keyInfo" class="hint"></div>
+    </div>
     <div style="grid-column:1/-1"><label>Contraseña — solo referencia a variable de entorno</label>
       <input id="f_pw" class="mono" placeholder="\${env:SAP_A4H_PASSWORD}"></div>
   </div>
-  <p class="hint">Este panel nunca guarda ni transporta una contraseña. Escribe <code>\${env:NOMBRE}</code> y define esa variable en el entorno; abajo verás si resuelve.</p>
+  <p class="hint">Este panel nunca guarda ni transporta un secreto. Para Basic, escribe <code>\${env:NOMBRE}</code>.
+  Para OAuth, indica la ruta de la <strong>service key</strong>: el fichero se queda donde está y solo se guarda su ruta,
+  así el <code>clientsecret</code> no acaba en este destination.</p>
   <div class="err" id="formErr"></div>
   <div class="row" style="margin-top:14px; justify-content:flex-end">
     <button value="cancel">Cancelar</button><button class="primary" id="saveBtn" value="save">Guardar</button>
@@ -135,6 +150,12 @@ async function refresh() {
   document.getElementById('sysFile').textContent = 'Fichero: ' + STATE.systems.file;
   document.getElementById('destDir').textContent = 'Carpeta: ' + STATE.destinations.dir;
 
+  const ds = STATE.destinationService || { configured:false, source:'', detail:'' };
+  document.getElementById('dsvc').innerHTML =
+    '<div class="step"><span class="pill ' + (ds.configured ? 'ok' : 'warn') + '">' +
+    (ds.configured ? 'configurado' : 'sin configurar') + '</span><span>' + esc(ds.source) +
+    (ds.detail ? '<br><span class="dim">' + esc(ds.detail) + '</span>' : '') + '</span></div>';
+
   document.getElementById('sysWarn').innerHTML = (STATE.warnings || [])
     .map(w => '<div class="notice">' + esc(w) + '</div>').join('');
 
@@ -149,6 +170,7 @@ async function refresh() {
     '<tr><td><strong>' + esc(d.name) + '</strong></td><td class="mono">' + esc(d.url) + '</td><td>' + esc(d.authType) +
     '</td><td>' + esc(d.proxyType || '—') + '</td><td>' +
     (d.secrets.length ? d.secrets.map(s => '<span class="pill ' + (s.kind === 'literal' ? 'bad' : (s.envRefs.every(r => r.resolved) ? 'ok' : 'bad')) + '">' + esc(s.field) + (s.kind === 'literal' ? ' literal' : '') + '</span>').join(' ') : '<span class="dim">ninguno</span>') +
+    (d.serviceKey ? '<br><span class="pill ' + (d.serviceKey.ok ? 'ok' : 'bad') + '">service key</span> <span class="dim">' + esc(d.serviceKey.detail) + '</span>' : '') +
     '</td><td class="row"><button onclick="editDest(' + i + ')">Editar</button>' +
     '<button class="danger" onclick="delDest(\\'' + esc(d.name) + '\\')">Borrar</button></td></tr>').join('') ||
     '<tr><td colspan="6" class="dim">Ningún destination configurado.</td></tr>';
@@ -169,6 +191,9 @@ function openDlg(kind, item) {
   $('f_pw').value = '';
   $('wrap_auth').hidden = kind === 'system';
   $('wrap_proxy').hidden = kind === 'system';
+  $('wrap_key').hidden = kind === 'system';
+  $('f_key').value = item && item.serviceKey ? item.serviceKey.path : '';
+  $('keyInfo').innerHTML = '';
   if (kind === 'destination' && item) { $('f_auth').value = item.authType; $('f_proxy').value = item.proxyType || 'Internet'; }
   $('formErr').textContent = '';
   $('dlg').showModal();
@@ -181,12 +206,29 @@ $('form').addEventListener('submit', async (ev) => {
   ev.preventDefault();
   const body = { name:$('f_name').value.trim(), url:$('f_url').value.trim(), client:$('f_client').value.trim(),
                  user:$('f_user').value.trim(), password:$('f_pw').value.trim(), previousName:previousName || undefined };
-  if (mode === 'destination') { body.authType = $('f_auth').value; body.proxyType = $('f_proxy').value; }
+  if (mode === 'destination') { body.authType = $('f_auth').value; body.proxyType = $('f_proxy').value; body.serviceKeyPath = $('f_key').value.trim(); }
   try {
     await call(mode === 'system' ? '/api/systems/save' : '/api/destinations/save', body);
     $('dlg').close(); await refresh();
   } catch (e) { $('formErr').textContent = e.message; }
 });
+
+async function inspectKey() {
+  const path = $('f_key').value.trim();
+  if (!path) return;
+  $('keyInfo').textContent = 'leyendo…';
+  try {
+    const k = await call('/api/service-key/inspect', { path });
+    const rows = [['tipo', k.kind], ['client id', k.clientId], ['secreto', k.clientSecret],
+                  ['UAA (token)', k.tokenUrl], ['API destinations', k.apiUrl || '—'], ['endpoint', k.endpointUrl || '—'], ['system id', k.systemId || '—']];
+    $('keyInfo').innerHTML = '<div class="result">' + rows.map(r =>
+      '<div class="step"><span class="pill">' + r[0] + '</span><span class="mono">' + esc(r[1]) + '</span></div>').join('') +
+      (k.kind === 'abap-environment' && !$('f_url').value ? '<div class="verdict">Se rellenará la URL con el endpoint de la key.</div>' : '') +
+      '</div>';
+    if (!$('f_url').value && k.endpointUrl) $('f_url').value = k.endpointUrl;
+    if (k.kind !== 'xsuaa') $('f_auth').value = 'OAuth2ClientCredentials';
+  } catch (e) { $('keyInfo').innerHTML = '<div class="err">' + esc(e.message) + '</div>'; }
+}
 
 async function delSystem(name) {
   if (!confirm('¿Borrar el sistema ' + name + '? Solo se borra la entrada de configuración.')) return;

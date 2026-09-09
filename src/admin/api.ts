@@ -21,6 +21,7 @@ import type { AppConfig, SapSystem } from "../config.js";
 import { loadConfig } from "../config.js";
 import { stripBom } from "../util/fs.js";
 import { expandEnvRefs } from "../util/envref.js";
+import { describeServiceKey, readServiceKeyFile } from "../btp/service-key.js";
 
 export interface EnvRef {
   /** Variable named by a `${env:NAME}` reference. */
@@ -48,6 +49,8 @@ export interface DestinationCard {
   /** Names of the secret-bearing fields present, plus how each is configured. */
   secrets: { field: string; kind: "env-ref" | "literal"; envRefs: EnvRef[] }[];
   customHeaders: string[];
+  /** Set when the destination takes its OAuth credentials from a service key file. */
+  serviceKey?: { path: string; ok: boolean; detail: string };
 }
 
 const ENV_REF = /\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g;
@@ -239,10 +242,31 @@ export function listDestinations(): { dir: string; destinations: DestinationCard
         const c = classify(raw[f] as string);
         return { field: f, kind: c.kind === "none" ? "literal" : c.kind, envRefs: c.envRefs };
       }),
-      customHeaders: headers && typeof headers === "object" ? Object.keys(headers) : []
+      customHeaders: headers && typeof headers === "object" ? Object.keys(headers) : [],
+      serviceKey: serviceKeyCard(pick(raw, ["serviceKeyPath", "ServiceKeyPath", "serviceKeyFile"]))
     });
   }
   return { dir: destinationsDir, destinations: cards };
+}
+
+/** Read a service key only to report what it is; the secret never leaves this function. */
+function serviceKeyCard(file: string): DestinationCard["serviceKey"] {
+  if (!file) return undefined;
+  try {
+    const key = readServiceKeyFile(file);
+    return {
+      path: file,
+      ok: true,
+      detail: `${key.kind} · client ${key.clientId.slice(0, 18)}… · UAA ${key.tokenUrl}`
+    };
+  } catch (e) {
+    return { path: file, ok: false, detail: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** Inspect a service key before saving, so the panel can show what it will configure. */
+export function inspectServiceKey(file: string): Record<string, unknown> {
+  return describeServiceKey(readServiceKeyFile(file));
 }
 
 export interface DestinationPatch {
@@ -253,6 +277,8 @@ export interface DestinationPatch {
   client?: string;
   user?: string;
   password?: string;
+  /** Path to a BTP service key; fills clientId, clientSecret and tokenServiceUrl at load time. */
+  serviceKeyPath?: string;
   previousName?: string;
 }
 
@@ -275,6 +301,10 @@ export function saveDestination(patch: DestinationPatch): { ok: true; file: stri
   // carry every field we do not own straight through, so an exported clientSecret survives an edit
   const existing = readJsonFile<Record<string, unknown>>(previousFile, {});
 
+  // Validate the key now, so a typo in the path surfaces here and not as a token request failing
+  // hours later. Only the path is stored — the secret stays in the key file.
+  if (patch.serviceKeyPath) readServiceKeyFile(patch.serviceKeyPath);
+
   const out: Record<string, unknown> = { ...existing };
   out.Name = name;
   out.URL = patch.url.trim();
@@ -282,6 +312,7 @@ export function saveDestination(patch: DestinationPatch): { ok: true; file: stri
   setOrDelete(out, "ProxyType", patch.proxyType);
   setOrDelete(out, "sap-client", patch.client);
   setOrDelete(out, "User", patch.user);
+  setOrDelete(out, "serviceKeyPath", patch.serviceKeyPath);
   if (password) out.Password = password;
   // drop the lowercase twins so one destination never carries two spellings of the same field
   for (const k of ["name", "url", "authType", "authentication", "proxyType", "client", "user", "username", "password"]) delete out[k];
@@ -513,11 +544,42 @@ export async function validateTarget(system: SapSystem, servicePath: string | un
 export function state(): {
   systems: ReturnType<typeof listSystems>;
   destinations: ReturnType<typeof listDestinations>;
+  destinationService: { configured: boolean; source: string; detail?: string };
   warnings: string[];
   dataDir: string;
 } {
   const config = loadConfig([]);
-  return { systems: listSystems(), destinations: listDestinations(), warnings: config.configWarnings, dataDir: config.dataDir };
+  return {
+    systems: listSystems(),
+    destinations: listDestinations(),
+    destinationService: destinationServiceCard(),
+    warnings: config.configWarnings,
+    dataDir: config.dataDir
+  };
+}
+
+/** Where the cloud Destination Service credentials come from, if anywhere. */
+function destinationServiceCard(): { configured: boolean; source: string; detail?: string } {
+  const keyFile = process.env.BTP_SERVICE_KEY_FILE?.trim();
+  if (keyFile) {
+    try {
+      const key = readServiceKeyFile(keyFile);
+      return key.apiUrl
+        ? { configured: true, source: `service key: ${keyFile}`, detail: `API ${key.apiUrl} · UAA ${key.tokenUrl}` }
+        : { configured: false, source: `service key: ${keyFile}`, detail: `This is a ${key.kind} key, not a destination service key — it has no "uri" field.` };
+    } catch (e) {
+      return { configured: false, source: `service key: ${keyFile}`, detail: e instanceof Error ? e.message : String(e) };
+    }
+  }
+  const vars = ["BTP_DESTINATION_API_URL", "BTP_TOKEN_URL", "BTP_CLIENT_ID", "BTP_CLIENT_SECRET"];
+  const missing = vars.filter((v) => !process.env[v]);
+  if (!missing.length) return { configured: true, source: "environment variables" };
+  if (process.env.VCAP_SERVICES) return { configured: true, source: "VCAP_SERVICES binding" };
+  return {
+    configured: false,
+    source: "not configured",
+    detail: `Point BTP_SERVICE_KEY_FILE at the destination service key downloaded from the cockpit, or set ${missing.join(", ")}.`
+  };
 }
 
 /** Resolve a `${env:NAME}` the way the server will, to show whether it is actually set. */
