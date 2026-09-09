@@ -2,6 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
 import { stripBom } from "./util/fs.js";
+import { expandEnvRefsDeep, missingEnvWarning } from "./util/envref.js";
 
 export type SapSystem = {
   name: string;
@@ -42,7 +43,7 @@ export interface AppConfig {
 }
 
 export const SERVER_NAME = "@pired/sap-fiori-mcp-server";
-export const SERVER_VERSION = "1.6.0";
+export const SERVER_VERSION = "1.7.0";
 
 function env(name: string, fallback = ""): string {
   return (process.env[name] ?? fallback).trim();
@@ -77,9 +78,14 @@ function readSystemsFile(file: string, warnings: string[]): SapSystem[] {
     warnings.push(`${file} could not be read as JSON (${e instanceof Error ? e.message : String(e)}). Expected [{ "name", "url", "client", "user", "password" }].`);
     return [];
   }
-  if (Array.isArray(raw)) return raw as SapSystem[];
-  if (raw && typeof raw === "object" && Array.isArray((raw as { systems?: unknown }).systems)) {
-    return (raw as { systems: SapSystem[] }).systems;
+  const missing = new Set<string>();
+  const expanded = expandEnvRefsDeep(raw, missing);
+  const warning = missingEnvWarning(file, missing);
+  if (warning) warnings.push(warning);
+
+  if (Array.isArray(expanded)) return expanded as SapSystem[];
+  if (expanded && typeof expanded === "object" && Array.isArray((expanded as { systems?: unknown }).systems)) {
+    return (expanded as { systems: SapSystem[] }).systems;
   }
   warnings.push(`${file} parsed but holds no systems. Expected an array, or an object with a "systems" array.`);
   return [];
@@ -106,7 +112,10 @@ export function loadConfig(argv: string[] = process.argv.slice(2)): AppConfig {
   const envJson = env("SAP_SYSTEMS_JSON");
   if (envJson) {
     try {
-      const parsed = JSON.parse(envJson);
+      const missing = new Set<string>();
+      const parsed = expandEnvRefsDeep(JSON.parse(stripBom(envJson)), missing);
+      const warning = missingEnvWarning("SAP_SYSTEMS_JSON", missing);
+      if (warning) configWarnings.push(warning);
       if (Array.isArray(parsed)) systems.push(...parsed);
     } catch (e) {
       configWarnings.push(`SAP_SYSTEMS_JSON is not valid JSON (${e instanceof Error ? e.message : String(e)}); file-based systems are still loaded.`);

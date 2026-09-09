@@ -359,3 +359,51 @@ describe("configuration files written on Windows", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 });
+
+// A config file with a plain-text password has to be guarded like a secret. ${env:NAME} keeps the
+// value in the environment, and is the convention the surrounding SAP tooling already uses.
+describe("${env:NAME} references in configuration", () => {
+  const writeSystems = (systems: unknown) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-envref-"));
+    const file = path.join(dir, "systems.json");
+    fs.writeFileSync(file, JSON.stringify(systems), "utf8");
+    vi.stubEnv("SAP_SYSTEMS_FILE", file);
+    return { dir, file };
+  };
+
+  it("resolves a password held in an environment variable", () => {
+    vi.stubEnv("TEST_A4H_PW", "from-the-environment");
+    vi.stubEnv("TEST_A4H_USER", "DEVELOPER");
+    const { dir } = writeSystems([
+      { name: "A4H", url: "https://host:44301", client: "100", user: "${env:TEST_A4H_USER}", password: "${env:TEST_A4H_PW}" }
+    ]);
+    const cfg = loadConfig([]);
+    const a4h = cfg.sapSystems.find((s) => s.name === "A4H")!;
+    expect(a4h.user).toBe("DEVELOPER");
+    expect(a4h.password).toBe("from-the-environment");
+    expect(cfg.configWarnings).toEqual([]);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("warns instead of authenticating with an empty password when the variable is unset", async () => {
+    const { dir, file } = writeSystems([
+      { name: "A4H", url: "https://host:44301", client: "100", user: "DEVELOPER", password: "${env:TEST_UNSET_PW}" }
+    ]);
+    const cfg = loadConfig([]);
+    expect(cfg.sapSystems[0].password).toBe("");
+    expect(cfg.configWarnings.join(" ")).toContain("TEST_UNSET_PW");
+    expect(cfg.configWarnings.join(" ")).toContain(file);
+
+    const { client, close } = await connect({ ...cfg, workspaceRoot: EXAMPLE_ROOT, logLevel: "off" });
+    const res = (await client.callTool({ name: "list_sap_systems", arguments: {} })).structuredContent as { warnings?: string[] };
+    expect(res.warnings?.join(" ")).toContain("TEST_UNSET_PW");
+    await close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("leaves ordinary values untouched", () => {
+    const { dir } = writeSystems([{ name: "PLAIN", url: "https://host:44300", client: "001", user: "u", password: "literal" }]);
+    expect(loadConfig([]).sapSystems[0].password).toBe("literal");
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+});
