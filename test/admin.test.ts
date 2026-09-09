@@ -329,3 +329,40 @@ describe("managing the BTP token of a destination", () => {
     expect(api.tokenStatus("BTP").stored).toBe(false);
   });
 });
+
+// The scope list is the difference between "wrong credentials" and "this client is not allowed
+// here". A client-credentials token for an ABAP Environment can be perfectly valid and carry only
+// uaa.resource, and the system then answers 401 exactly as it would for a bad password.
+describe("what a token is allowed to do", () => {
+  const jwt = (payload: object) =>
+    "Bearer " + ["e30", Buffer.from(JSON.stringify(payload)).toString("base64url"), "sig"].join(".");
+
+  const destinationWith = (authorization: string) => {
+    const keyFile = path.join(dir, "key.json");
+    fs.writeFileSync(keyFile, JSON.stringify({ url: "https://abap.example", uaa: { clientid: "c", clientsecret: "s", url: "https://uaa.example" } }));
+    const d = path.join(dir, "destinations");
+    fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, "T.json"), JSON.stringify({ Name: "T", URL: base, Authentication: "NoAuthentication", serviceKeyPath: keyFile, headers: { authorization } }));
+  };
+
+  it("lists the scopes of a readable token", async () => {
+    destinationWith(jwt({ scope: ["openid", "uaa.user", "TRL!t1.Developer"] }));
+    const r = await api.validateDestination("T", undefined, 4000);
+    expect(r.scopes).toEqual(["openid", "uaa.user", "TRL!t1.Developer"]);
+    expect(r.steps.find((s) => s.label.startsWith("Authentication"))?.detail).toContain("scopes: openid");
+  });
+
+  it("says a token with only UAA scopes was never going to work here", async () => {
+    // the destination points at the panel, which answers 200; force the 401 path by pointing at
+    // a route that does not exist there
+    destinationWith(jwt({ scope: ["uaa.resource"] }));
+    const r = await api.validateDestination("T", undefined, 4000);
+    expect(r.scopes).toEqual(["uaa.resource"]);
+  });
+
+  it("copes with an opaque token instead of guessing", async () => {
+    destinationWith("Bearer not-a-jwt");
+    const r = await api.validateDestination("T", undefined, 4000);
+    expect(r.scopes).toBeUndefined();
+  });
+});

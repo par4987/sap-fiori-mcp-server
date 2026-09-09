@@ -344,6 +344,12 @@ Un **destination OAuth** también puede apuntar a su service key en lugar de del
 > devuelve **200 con una página de login**, que despista más que un error. Los servicios se consumen
 > en el host de la key, y exigen token de usuario nombrado también para OData.
 
+> **Por qué `OAuth2ClientCredentials` falla contra un ABAP Environment.** El token se emite sin
+> problema, pero llega con un único scope, `uaa.resource`, que no autoriza nada en el ABAP: el
+> sistema responde 401 con `sap-authenticated: false`, idéntico a unas credenciales incorrectas.
+> El panel muestra ahora los scopes del token junto al paso de autenticación, que es lo que
+> distingue "credencial mala" de "este cliente no tiene permiso aquí".
+
 Para un **ABAP Environment (Steampunk)** no sirve `OAuth2ClientCredentials`: ese token pertenece al
 cliente OAuth y a ninguna persona, y el ABAP responde 401 porque no tiene usuario con el que ejecutar.
 Hace falta un usuario nombrado, y en un subaccount con proveedor de identidad (trial, o corporativo con
@@ -433,7 +439,7 @@ sap-fiori-mcp-server/
 ```bash
 npm run build       # tsc → dist/
 npm run typecheck   # tsc --noEmit
-npm test            # vitest run (193 tests)
+npm test            # vitest run (196 tests)
 npm run test:watch  # vitest watch
 ```
 

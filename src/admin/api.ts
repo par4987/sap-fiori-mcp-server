@@ -349,6 +349,8 @@ export interface ValidateResult {
   sapSystem?: string;
   realm?: string;
   steps: ProbeStep[];
+  /** Scopes carried by the access token, when it is a readable JWT. */
+  scopes?: string[];
   verdict: string;
 }
 
@@ -452,6 +454,31 @@ function checkTls(target: string, timeoutMs: number): Promise<ValidateResult["tl
     socket.on("timeout", () => { socket.destroy(); resolve({ trusted: false, note: "TLS handshake timed out." }); });
     socket.on("error", (e) => resolve({ trusted: false, note: `TLS handshake failed: ${e.message}` }));
   });
+}
+
+/**
+ * What an access token is actually allowed to do.
+ *
+ * An XSUAA token is a JWT whose payload lists its scopes, and that list is the difference between
+ * a credential problem and an authorisation one. A client-credentials token for an ABAP
+ * Environment can come back carrying only `uaa.resource` — perfectly valid, and useless against
+ * ABAP, which then answers 401 as if the credentials were wrong. Showing the scopes turns hours
+ * of suspecting the service key into one glance.
+ */
+function tokenScopes(authorization: string | undefined): string[] | null {
+  const jwt = authorization?.startsWith("Bearer ") ? authorization.slice(7) : null;
+  const payload = jwt?.split(".")[1];
+  if (!payload) return null;
+  try {
+    const decoded = JSON.parse(Buffer.from(payload.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8")) as {
+      scope?: string[] | string;
+    };
+    const scope = decoded.scope;
+    if (Array.isArray(scope)) return scope;
+    return typeof scope === "string" ? scope.split(" ").filter(Boolean) : null;
+  } catch {
+    return null; // an opaque token is a fine answer; it just cannot be described
+  }
 }
 
 /** Pull the readable sentence out of an SAP error page or OData error payload. */
@@ -576,8 +603,16 @@ export async function validateDestination(name: string, servicePath?: string, ti
   let headers: Record<string, string>;
   try {
     headers = await buildAuthHeaders(destination, timeoutMs, config.dataDir);
+    const scopes = tokenScopes(headers.authorization);
     const kind = headers.authorization?.startsWith("Basic ") ? "Basic" : headers.authorization ? "Bearer (token obtained)" : "none";
-    steps.push({ label: `Authentication resolved (${destination.authType})`, path: destination.tokenServiceUrl ?? "-", status: 200, ok: true, detail: kind });
+    steps.push({
+      label: `Authentication resolved (${destination.authType})`,
+      path: destination.tokenServiceUrl ?? "-",
+      status: 200,
+      ok: true,
+      detail: scopes ? `${kind} · scopes: ${scopes.slice(0, 6).join(", ")}${scopes.length > 6 ? `, +${scopes.length - 6}` : ""}` : kind
+    });
+    result.scopes = scopes ?? undefined;
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);
     steps.push({ label: `Authentication resolved (${destination.authType})`, path: destination.tokenServiceUrl ?? "-", status: null, ok: false, detail });
@@ -600,7 +635,10 @@ export async function validateDestination(name: string, servicePath?: string, ti
   });
 
   if (call.status === 401) {
-    result.verdict = "The token was obtained but the service rejected it. The client may lack a communication arrangement on this system.";
+    const abapScopes = (result.scopes ?? []).filter((s) => !s.startsWith("uaa."));
+    result.verdict = abapScopes.length
+      ? "The token was obtained but the service rejected it. The client has scopes on this system, so this looks like a missing authorisation for this particular service rather than a bad credential."
+      : "The token was obtained and carries no scope for this system — only UAA's own. That is why it is refused: the OAuth client has no authorisation here, which no amount of re-issuing the key will change. A named-user token (OAuth2RefreshToken) or a communication arrangement grants one.";
   } else if (call.status === 403) {
     result.verdict = `Authenticated, but not authorised${call.body ? `: ${sapMessage(call.body) ?? "no detail given"}` : "."}`;
   } else if (call.status !== null && call.status >= 300 && call.status < 400) {
