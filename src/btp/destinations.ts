@@ -21,6 +21,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { AppConfig, SapSystem } from "../config.js";
 import { logger } from "../logger.js";
+import { stripBom } from "../util/fs.js";
 import { resolveSystem } from "../odata/client.js";
 
 export type DestinationAuthType =
@@ -114,7 +115,7 @@ export function normalizeDestination(raw: Record<string, unknown>, source: Desti
 }
 
 function readDestinationsFromJson(jsonText: string, source: DestinationSource, fallbackName?: string): BtpDestination[] {
-  const parsed = JSON.parse(jsonText) as unknown;
+  const parsed = JSON.parse(stripBom(jsonText)) as unknown;
   if (Array.isArray(parsed)) return parsed.filter((d) => d && typeof d === "object").map((d) => normalizeDestination(d as Record<string, unknown>, source, fallbackName));
   if (parsed && typeof parsed === "object") {
     const obj = parsed as Record<string, unknown>;

@@ -302,3 +302,60 @@ describe("destination env fallbacks", () => {
     expect(d.userToken).toBe("explicit");
   });
 });
+
+// PowerShell 5.1 and Notepad both write a UTF-8 BOM, so a hand-written config file on Windows
+// starts with one. JSON.parse rejects it, and the failure used to be swallowed: the server
+// reported "no systems configured" with nothing pointing at the real cause.
+describe("configuration files written on Windows", () => {
+  const withSystemsFile = (contents: string | Buffer) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-cfg-"));
+    const file = path.join(dir, "systems.json");
+    fs.writeFileSync(file, contents);
+    vi.stubEnv("SAP_SYSTEMS_FILE", file);
+    return { dir, file };
+  };
+  const systems = [{ name: "ERP", url: "https://erp.example:44300", client: "810", user: "G1", password: "s3cr3t" }];
+
+  it("loads a systems.json that starts with a BOM", () => {
+    const { dir } = withSystemsFile(Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(JSON.stringify(systems), "utf8")]));
+    const cfg = loadConfig([]);
+    expect(cfg.sapSystems.map((s) => s.name)).toContain("ERP");
+    expect(cfg.configWarnings).toEqual([]);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("still loads a plain UTF-8 file", () => {
+    const { dir } = withSystemsFile(JSON.stringify({ systems }));
+    expect(loadConfig([]).sapSystems.map((s) => s.name)).toContain("ERP");
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("reports a malformed file instead of silently finding no systems", async () => {
+    const { dir, file } = withSystemsFile("{ this is not json");
+    const cfg = loadConfig([]);
+    expect(cfg.sapSystems).toEqual([]);
+    expect(cfg.configWarnings.join(" ")).toContain(file);
+
+    const { client, close } = await connect({ ...cfg, workspaceRoot: EXAMPLE_ROOT, logLevel: "off" });
+    const res = (await client.callTool({ name: "list_sap_systems", arguments: {} })).structuredContent as {
+      count: number;
+      warnings?: string[];
+      hint: string;
+    };
+    expect(res.count).toBe(0);
+    expect(res.warnings?.join(" ")).toContain("could not be read as JSON");
+    expect(res.hint).toContain("could not be used");
+    await close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("never invents a password: secrets stay out of the tool output", async () => {
+    const { dir } = withSystemsFile(JSON.stringify(systems));
+    const cfg = loadConfig([]);
+    const { client, close } = await connect({ ...cfg, workspaceRoot: EXAMPLE_ROOT, logLevel: "off" });
+    const res = await client.callTool({ name: "list_sap_systems", arguments: {} });
+    expect(JSON.stringify(res)).not.toContain("s3cr3t");
+    await close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+});

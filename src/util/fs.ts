@@ -26,8 +26,19 @@ export function isDir(p: string): boolean {
   }
 }
 
+/**
+ * Drop a UTF-8 byte order mark.
+ *
+ * `JSON.parse` rejects a leading BOM, and it is the normal outcome on Windows: PowerShell 5.1
+ * writes one with `Set-Content -Encoding utf8`, as does Notepad. Config files hand-written on
+ * Windows would otherwise look corrupt for no visible reason.
+ */
+export function stripBom(text: string): string {
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+}
+
 export function readJson<T = unknown>(file: string): T {
-  return JSON.parse(fs.readFileSync(file, "utf8")) as T;
+  return JSON.parse(stripBom(fs.readFileSync(file, "utf8"))) as T;
 }
 
 export function tryReadJson<T = unknown>(file: string): T | null {

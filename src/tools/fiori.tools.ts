@@ -73,10 +73,14 @@ export function registerFioriTools(server: McpServer, config: AppConfig, name: (
         return json({
           count: systems.length,
           systems,
+          // a malformed config file used to be indistinguishable from having none
+          ...(config.configWarnings.length ? { warnings: config.configWarnings } : {}),
           hint:
             systems.length === 0
-              ? "No systems configured. Set env vars SAP_BASE_URL, SAP_USER, SAP_PASSWORD (optionally SAP_CLIENT, SAP_SYSTEM_NAME) or create ~/.sap-fiori-mcp/systems.json with [{ name, url, client, user, password }]."
-              : "Use list_sap_systems names with download_odata_service_metadata."
+              ? config.configWarnings.length
+                ? "A configuration file was found but could not be used; see warnings. Files written on Windows must be UTF-8 and hold a JSON array."
+                : "No systems configured. Set env vars SAP_BASE_URL, SAP_USER, SAP_PASSWORD (optionally SAP_CLIENT, SAP_SYSTEM_NAME) or create ~/.sap-fiori-mcp/systems.json with [{ name, url, client, user, password }]."
+              : "Use these names as systemName in download_odata_service_metadata and query_odata_data."
         });
       } catch (e) {
         return err(e);

@@ -73,6 +73,7 @@ export const listSapSystemsOutput = {
   systems: z.array(
     loose({ name: z.string(), url: z.string(), client: z.string().optional(), authType: z.string(), user: z.string().optional() })
   ),
+  warnings: z.array(z.string()).optional().describe("Configuration problems, e.g. a systems.json that could not be parsed"),
   hint: z.string()
 };
 

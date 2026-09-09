@@ -1,6 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
+import { stripBom } from "./util/fs.js";
 
 export type SapSystem = {
   name: string;
@@ -36,10 +37,12 @@ export interface AppConfig {
   sapSystems: SapSystem[];
   requestTimeoutMs: number;
   noResources: boolean;
+  /** Problems found while loading configuration, surfaced by list_sap_systems. */
+  configWarnings: string[];
 }
 
 export const SERVER_NAME = "@pired/sap-fiori-mcp-server";
-export const SERVER_VERSION = "1.5.0";
+export const SERVER_VERSION = "1.6.0";
 
 function env(name: string, fallback = ""): string {
   return (process.env[name] ?? fallback).trim();
@@ -63,18 +66,23 @@ function expandHome(p: string): string {
   return p;
 }
 
-function readSystemsFile(file: string): SapSystem[] {
+function readSystemsFile(file: string, warnings: string[]): SapSystem[] {
+  if (!fs.existsSync(file)) return [];
+  let raw: unknown;
   try {
-    if (!fs.existsSync(file)) return [];
-    const raw = JSON.parse(fs.readFileSync(file, "utf8"));
-    if (Array.isArray(raw)) return raw as SapSystem[];
-    if (raw && typeof raw === "object" && Array.isArray(raw.systems)) {
-      return raw.systems as SapSystem[];
-    }
-    return [];
-  } catch {
+    // stripBom: a config file written by PowerShell or Notepad starts with a BOM that
+    // JSON.parse rejects, and swallowing that made the server report "no systems configured"
+    raw = JSON.parse(stripBom(fs.readFileSync(file, "utf8")));
+  } catch (e) {
+    warnings.push(`${file} could not be read as JSON (${e instanceof Error ? e.message : String(e)}). Expected [{ "name", "url", "client", "user", "password" }].`);
     return [];
   }
+  if (Array.isArray(raw)) return raw as SapSystem[];
+  if (raw && typeof raw === "object" && Array.isArray((raw as { systems?: unknown }).systems)) {
+    return (raw as { systems: SapSystem[] }).systems;
+  }
+  warnings.push(`${file} parsed but holds no systems. Expected an array, or an object with a "systems" array.`);
+  return [];
 }
 
 export function loadConfig(argv: string[] = process.argv.slice(2)): AppConfig {
@@ -93,17 +101,18 @@ export function loadConfig(argv: string[] = process.argv.slice(2)): AppConfig {
     : "error") as AppConfig["logLevel"];
 
   // SAP systems: from dedicated JSON env/file + from canonical single-system env vars
+  const configWarnings: string[] = [];
   const systems: SapSystem[] = [];
   const envJson = env("SAP_SYSTEMS_JSON");
   if (envJson) {
     try {
       const parsed = JSON.parse(envJson);
       if (Array.isArray(parsed)) systems.push(...parsed);
-    } catch {
-      /* invalid JSON ignored, file-based systems still loaded */
+    } catch (e) {
+      configWarnings.push(`SAP_SYSTEMS_JSON is not valid JSON (${e instanceof Error ? e.message : String(e)}); file-based systems are still loaded.`);
     }
   }
-  systems.push(...readSystemsFile(env("SAP_SYSTEMS_FILE", path.join(dataDir, "systems.json"))));
+  systems.push(...readSystemsFile(env("SAP_SYSTEMS_FILE", path.join(dataDir, "systems.json")), configWarnings));
   if (env("SAP_BASE_URL")) {
     const name = env("SAP_SYSTEM_NAME", "default");
     if (!systems.some((s) => s.name === name)) {
@@ -142,6 +151,7 @@ export function loadConfig(argv: string[] = process.argv.slice(2)): AppConfig {
     toolPrefix,
     sapSystems: systems,
     requestTimeoutMs: num(env("SAP_FIORI_MCP_TIMEOUT_MS", "30000"), 30000, 1000),
+    configWarnings,
     noResources: !!env("SAP_FIORI_MCP_RESPONSE_NO_RESOURCES")
   };
 }

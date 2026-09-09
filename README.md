@@ -237,7 +237,7 @@ docker run -i --rm sap-fiori-mcp-server
 | `SAP_FIORI_MCP_LOG_FILE` | `~/.sap-fiori-mcp/server.log` | Ruta del log. |
 | `SAP_FIORI_MCP_WORKSPACE_ROOT` | cwd | Raíz por defecto para rutas relativas. |
 | `SAP_BASE_URL` / `SAP_USER` / `SAP_PASSWORD` / `SAP_CLIENT` / `SAP_SYSTEM_NAME` | — | Sistema SAP "default" con Basic Auth. |
-| `SAP_SYSTEMS_JSON` o `SAP_SYSTEMS_FILE` | `~/.sap-fiori-mcp/systems.json` | Varios sistemas: `[{ "name", "url", "client", "user", "password" }]`. |
+| `SAP_SYSTEMS_JSON` o `SAP_SYSTEMS_FILE` | `~/.sap-fiori-mcp/systems.json` | Varios sistemas: `[{ "name", "url", "client", "user", "password" }]`. UTF-8, con o sin BOM; si el fichero no se puede leer, `list_sap_systems` lo dice en `warnings` en vez de reportar cero sistemas. |
 | `SAP_DESTINATIONS_JSON` | — | Destinations BTP inline: `[{ "Name", "URL", "Authentication", ... }]` (también acepta el env `destinations` del Cloud SDK). |
 | `SAP_DESTINATIONS_FILE` / `SAP_DESTINATIONS_DIR` | dir: `~/.sap-fiori-mcp/destinations` | Un JSON por destination (`<nombre>.json`, formato cockpit export o camelCase). |
 | `BTP_CLIENT_ID` / `BTP_CLIENT_SECRET` / `BTP_TOKEN_URL` / `BTP_DESTINATION_API_URL` | — | Conexión al **BTP Destination Service** (o detección automática vía `VCAP_SERVICES`). |
@@ -352,7 +352,7 @@ sap-fiori-mcp-server/
 ```bash
 npm run build       # tsc → dist/
 npm run typecheck   # tsc --noEmit
-npm test            # vitest run (124 tests)
+npm test            # vitest run (128 tests)
 npm run test:watch  # vitest watch
 ```
 
