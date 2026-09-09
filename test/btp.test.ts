@@ -56,9 +56,14 @@ describe("BTP destinations: loading and normalization", () => {
   });
 
   it("loads destinations from SAP_DESTINATIONS_JSON", () => {
+    // point the directory source at an empty folder: without this the test reads whatever
+    // destinations the developer happens to have configured, and passes only on a clean machine
+    const empty = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-nodest-"));
+    vi.stubEnv("SAP_DESTINATIONS_DIR", empty);
     vi.stubEnv("SAP_DESTINATIONS_JSON", JSON.stringify([{ Name: "D1", URL: "https://d1", Authentication: "NoAuthentication" }, { Name: "D2", URL: "https://d2", Authentication: "BasicAuthentication", User: "u", Password: "p" }]));
     const list = loadDestinations(config);
     expect(list.map((d) => d.name)).toEqual(["D1", "D2"]);
+    fs.rmSync(empty, { recursive: true, force: true });
   });
 
   it("loads destinations from SAP_DESTINATIONS_DIR files", () => {

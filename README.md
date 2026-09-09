@@ -236,7 +236,7 @@ npx @pired/sap-fiori-mcp-server --admin
 ```
 
 Abre un panel local para dar de alta, editar, renombrar y borrar sistemas SAP y destinations BTP,
-y **probar cada conexión** antes de usarla: alcance del host, aceptación de credenciales y lectura
+y **probar cada conexión** —sistema o destination— antes de usarla: alcance del host, aceptación de credenciales y lectura
 de `$metadata`, mostrando el código HTTP, el sistema que responde (`sap-system`), el realm y el
 mensaje real de SAP. También informa de si el certificado TLS es de confianza y de qué variables
 `${env:...}` no están definidas.
@@ -397,7 +397,7 @@ sap-fiori-mcp-server/
 ```bash
 npm run build       # tsc → dist/
 npm run typecheck   # tsc --noEmit
-npm test            # vitest run (160 tests)
+npm test            # vitest run (164 tests)
 npm run test:watch  # vitest watch
 ```
 

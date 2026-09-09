@@ -189,3 +189,51 @@ describe("connection test", () => {
     expect(r.verdict).toContain("No password resolved");
   });
 });
+
+describe("testing a destination", () => {
+  const writeDest = (name: string, body: Record<string, unknown>) => {
+    const d = path.join(dir, "destinations");
+    fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, `${name}.json`), JSON.stringify(body));
+  };
+
+  it("reaches a destination that needs no authentication", async () => {
+    // the panel's own loopback server stands in for a reachable endpoint
+    writeDest("LOCAL", { Name: "LOCAL", URL: base, Authentication: "NoAuthentication" });
+    const r = await api.validateDestination("LOCAL", undefined, 4000);
+    expect(r.steps[0].label).toBe("Host reachable");
+    expect(r.steps.some((s) => s.label.startsWith("Authentication resolved"))).toBe(true);
+  });
+
+  // The point of a service key is that a bad path fails loudly at the credential step, naming
+  // the file, instead of surfacing later as an opaque token error.
+  it("blames the service key by path when it cannot produce credentials", async () => {
+    const missing = path.join(dir, "absent-key.json");
+    writeDest("BROKEN", { Name: "BROKEN", URL: base, Authentication: "OAuth2ClientCredentials", serviceKeyPath: missing });
+    const r = await api.validateDestination("BROKEN", undefined, 4000);
+    const auth = r.steps.find((s) => s.label.startsWith("Authentication resolved"))!;
+    expect(auth.ok).toBe(false);
+    expect(r.verdict).toContain(missing);
+  });
+
+  it("refuses to call a redirect a success", async () => {
+    const redirector = http.createServer((_req, res) => {
+      res.writeHead(302, { location: "https://elsewhere.example/" });
+      res.end();
+    });
+    await new Promise<void>((r) => redirector.listen(0, "127.0.0.1", () => r()));
+    const port = (redirector.address() as { port: number }).port;
+    writeDest("REDIR", { Name: "REDIR", URL: `http://127.0.0.1:${port}`, Authentication: "NoAuthentication" });
+
+    const r = await api.validateDestination("REDIR", undefined, 4000);
+    const last = r.steps[r.steps.length - 1];
+    expect(last.status).toBe(302);
+    expect(last.ok).toBe(false);
+    expect(r.verdict).toContain("proves nothing");
+    await new Promise<void>((res) => redirector.close(() => res()));
+  });
+
+  it("reports an unknown destination by name", async () => {
+    await expect(api.validateDestination("NOPE")).rejects.toThrow(/No destination called 'NOPE'/);
+  });
+});

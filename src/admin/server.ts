@@ -83,7 +83,10 @@ const ROUTES: Record<string, Handler> = {
     }),
   "/api/service-key/inspect": (b) => api.inspectServiceKey(str(b.path, "path")),
   "/api/destinations/delete": (b) => api.deleteDestination(str(b.name, "name")),
-  "/api/validate": (b) => api.validateSystem(str(b.name, "name"), opt(b.servicePath))
+  "/api/validate": (b) =>
+    opt(b.kind) === "destination"
+      ? api.validateDestination(str(b.name, "name"), opt(b.servicePath))
+      : api.validateSystem(str(b.name, "name"), opt(b.servicePath))
 };
 
 export interface AdminHandle {

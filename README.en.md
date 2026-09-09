@@ -49,7 +49,7 @@ npm install && npm run build
 ```bash
 git clone <this-repo> && cd sap-fiori-mcp-server
 npm install && npm run build
-npm test              # 160 unit + integration tests
+npm test              # 164 unit + integration tests
 npm start             # stdio mode
 npm run start:http    # HTTP mode on http://localhost:3001/mcp
 ```
@@ -190,7 +190,7 @@ Copy the rules from [`docs/AGENTS-rules.md`](./docs/AGENTS-rules.md) into your `
 ```bash
 npm run build       # tsc → dist/
 npm run typecheck   # tsc --noEmit
-npm test            # vitest run (160 tests)
+npm test            # vitest run (164 tests)
 ```
 
 **Server evaluation**: [`eval/evaluation.xml`](./eval/evaluation.xml) holds 10 read-only questions

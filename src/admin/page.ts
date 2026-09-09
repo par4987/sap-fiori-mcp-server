@@ -166,14 +166,20 @@ async function refresh() {
     '<button class="danger" onclick="delSystem(\\'' + esc(s.name) + '\\')">Borrar</button></td></tr>').join('') ||
     '<tr><td colspan="6" class="dim">Ningún sistema configurado.</td></tr>';
 
-  document.getElementById('destinations').innerHTML = STATE.destinations.destinations.map((d, i) =>
-    '<tr><td><strong>' + esc(d.name) + '</strong></td><td class="mono">' + esc(d.url) + '</td><td>' + esc(d.authType) +
-    '</td><td>' + esc(d.proxyType || '—') + '</td><td>' +
-    (d.secrets.length ? d.secrets.map(s => '<span class="pill ' + (s.kind === 'literal' ? 'bad' : (s.envRefs.every(r => r.resolved) ? 'ok' : 'bad')) + '">' + esc(s.field) + (s.kind === 'literal' ? ' literal' : '') + '</span>').join(' ') : '<span class="dim">ninguno</span>') +
-    (d.serviceKey ? '<br><span class="pill ' + (d.serviceKey.ok ? 'ok' : 'bad') + '">service key</span> <span class="dim">' + esc(d.serviceKey.detail) + '</span>' : '') +
-    '</td><td class="row"><button onclick="editDest(' + i + ')">Editar</button>' +
-    '<button class="danger" onclick="delDest(\\'' + esc(d.name) + '\\')">Borrar</button></td></tr>').join('') ||
-    '<tr><td colspan="6" class="dim">Ningún destination configurado.</td></tr>';
+  document.getElementById('destinations').innerHTML = STATE.destinations.destinations.map((d, i) => {
+    const creds = d.serviceKey
+      ? '<span class="pill ' + (d.serviceKey.ok ? 'ok' : 'bad') + '">service key</span>' +
+        '<span class="sub">' + esc(d.serviceKey.detail) + '</span>'
+      : (d.secrets.length
+          ? d.secrets.map(x => '<span class="pill ' + (x.kind === 'literal' ? 'bad' : (x.envRefs.every(r => r.resolved) ? 'ok' : 'bad')) + '">' +
+              esc(x.field) + (x.kind === 'literal' ? ' literal' : '') + '</span>').join(' ')
+          : '<span class="dim">ninguna</span>');
+    return '<tr><td><strong>' + esc(d.name) + '</strong>' +
+      (d.proxyType && d.proxyType !== 'Internet' ? '<span class="sub">' + esc(d.proxyType) + '</span>' : '') +
+      '</td><td class="url mono">' + esc(d.url) + '</td><td>' + esc(d.authType) + '</td><td>' + creds +
+      '</td><td class="actions"><button onclick="editDest(' + i + ')">Editar</button>' +
+      '<button class="danger" onclick="delDest(&quot;' + esc(d.name) + '&quot;)">Borrar</button></td></tr>';
+  }).join('') || '<tr><td colspan="5" class="dim">Ningún destination configurado.</td></tr>';
 
   document.getElementById('testName').innerHTML = STATE.systems.systems.map(s => '<option>' + esc(s.name) + '</option>').join('');
 }

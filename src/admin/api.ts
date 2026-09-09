@@ -22,6 +22,7 @@ import { loadConfig } from "../config.js";
 import { stripBom } from "../util/fs.js";
 import { expandEnvRefs } from "../util/envref.js";
 import { describeServiceKey, readServiceKeyFile } from "../btp/service-key.js";
+import { buildAuthHeaders, findDestination } from "./../btp/destinations.js";
 
 export interface EnvRef {
   /** Variable named by a `${env:NAME}` reference. */
@@ -364,7 +365,7 @@ interface Probe {
  * connect would make the panel useless exactly where it is needed. Instead the panel connects
  * and tells the operator the certificate is not trusted, which is the fact they need.
  */
-function request(target: string, auth: { user?: string; password?: string }, timeoutMs: number): Promise<Probe> {
+function request(target: string, extraHeaders: Record<string, string>, timeoutMs: number): Promise<Probe> {
   return new Promise((resolve) => {
     let parsed: URL;
     try {
@@ -375,10 +376,7 @@ function request(target: string, auth: { user?: string; password?: string }, tim
     }
     const secure = parsed.protocol === "https:";
     const lib = secure ? https : http;
-    const headers: Record<string, string> = { accept: "*/*" };
-    if (auth.user && auth.password) {
-      headers.authorization = `Basic ${Buffer.from(`${auth.user}:${auth.password}`).toString("base64")}`;
-    }
+    const headers: Record<string, string> = { accept: "*/*", ...extraHeaders };
     const req = lib.request(
       target,
       { method: "GET", headers, timeout: timeoutMs, ...(secure ? { rejectUnauthorized: false } : {}) },
@@ -478,7 +476,10 @@ export async function validateSystem(name: string, servicePath?: string, timeout
 export async function validateTarget(system: SapSystem, servicePath: string | undefined, timeoutMs: number): Promise<ValidateResult> {
   const base = system.url.replace(/\/$/, "");
   const clientParam = system.client ? `?sap-client=${encodeURIComponent(system.client)}` : "";
-  const auth = { user: system.user, password: system.password };
+  const auth: Record<string, string> =
+    system.user && system.password
+      ? { authorization: `Basic ${Buffer.from(`${system.user}:${system.password}`).toString("base64")}` }
+      : {};
   const steps: ProbeStep[] = [];
   const result: ValidateResult = { target: system.name, url: base, tls: await checkTls(base, timeoutMs), steps, verdict: "" };
 
@@ -537,6 +538,81 @@ export async function validateTarget(system: SapSystem, servicePath: string | un
   }
 
   result.verdict = `Logon accepted${result.sapSystem ? ` on ${result.sapSystem}` : ""}. Add a service path to check a concrete OData service.`;
+  return result;
+}
+
+/**
+ * Test a destination, token exchange included.
+ *
+ * For an OAuth destination the interesting question is not whether the host answers — it is
+ * whether the client credentials in the service key still buy a token. `buildAuthHeaders` is the
+ * same code path the tools use, so a failure here is the failure a tool would hit.
+ */
+export async function validateDestination(name: string, servicePath?: string, timeoutMs = 20000): Promise<ValidateResult> {
+  const config = loadConfig([]);
+  const destination = await findDestination(config, name, timeoutMs);
+  if (!destination) throw new Error(`No destination called '${name}'.`);
+
+  const base = destination.url.replace(/\/$/, "");
+  const clientParam = destination.client ? `?sap-client=${encodeURIComponent(destination.client)}` : "";
+  const steps: ProbeStep[] = [];
+  const result: ValidateResult = { target: destination.name, url: base, tls: await checkTls(base, timeoutMs), steps, verdict: "" };
+
+  if (!base) {
+    result.verdict = "This destination has no URL, so there is nothing to reach.";
+    return result;
+  }
+
+  const probe = await request(base, {}, timeoutMs);
+  result.sapSystem ??= probe.headers["sap-system"];
+  steps.push({ label: "Host reachable", path: "/", status: probe.status, ok: probe.status !== null, detail: probe.error });
+  if (probe.status === null) {
+    result.verdict = `No answer from ${base}. ${probe.error ?? ""}`.trim();
+    return result;
+  }
+
+  let headers: Record<string, string>;
+  try {
+    headers = await buildAuthHeaders(destination, timeoutMs);
+    const kind = headers.authorization?.startsWith("Basic ") ? "Basic" : headers.authorization ? "Bearer (token obtained)" : "none";
+    steps.push({ label: `Authentication resolved (${destination.authType})`, path: destination.tokenServiceUrl ?? "-", status: 200, ok: true, detail: kind });
+  } catch (e) {
+    const detail = e instanceof Error ? e.message : String(e);
+    steps.push({ label: `Authentication resolved (${destination.authType})`, path: destination.tokenServiceUrl ?? "-", status: null, ok: false, detail });
+    result.verdict = destination.serviceKeyPath
+      ? `The service key at ${destination.serviceKeyPath} did not produce a token: ${detail}`
+      : `Authentication could not be resolved: ${detail}`;
+    return result;
+  }
+
+  const target = servicePath ? `${base}${servicePath.replace(/\/$/, "")}/$metadata${clientParam}` : `${base}${clientParam}`;
+  const call = await request(target, headers, timeoutMs);
+  const redirect = call.headers["location"];
+  steps.push({
+    label: servicePath ? "Service metadata" : "Endpoint with credentials",
+    path: servicePath ? `${servicePath}/$metadata` : "/",
+    status: call.status,
+    // a redirect is not an answer: it neither accepted nor rejected the token
+    ok: call.status !== null && call.status < 300,
+    detail: call.error ?? (redirect ? `redirected to ${redirect}` : undefined) ?? sapMessage(call.body)
+  });
+
+  if (call.status === 401) {
+    result.verdict = "The token was obtained but the service rejected it. The client may lack a communication arrangement on this system.";
+  } else if (call.status === 403) {
+    result.verdict = `Authenticated, but not authorised${call.body ? `: ${sapMessage(call.body) ?? "no detail given"}` : "."}`;
+  } else if (call.status !== null && call.status >= 300 && call.status < 400) {
+    // saying "working" here would repeat the mistake of trusting a status that proves nothing
+    result.verdict =
+      `The token was obtained, but the endpoint answered ${call.status} and redirected${redirect ? ` to ${redirect}` : ""}, ` +
+      "which proves nothing about whether the token is accepted. Give a service path to test a concrete OData service.";
+  } else if (call.status !== null && call.status < 300) {
+    result.verdict = servicePath
+      ? "Working: token accepted and the service answered."
+      : "Working: token obtained and the endpoint answered. A service path would test a concrete service.";
+  } else {
+    result.verdict = `Token obtained; the endpoint answered HTTP ${call.status}.`;
+  }
   return result;
 }
 
