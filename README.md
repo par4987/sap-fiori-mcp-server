@@ -334,6 +334,11 @@ Un **destination OAuth** también puede apuntar a su service key en lugar de del
   "serviceKeyPath": "/ruta/a/abap-key.json" }
 ```
 
+> **Dos hosts, no uno.** Un ABAP Environment sirve ADT en el host que nombra la service key y los
+> servicios OData en ese mismo host con `-web`. Apuntar al equivocado da un 401 (en `.abap.`) o una
+> página de login con estado 200 (en `.abap-web.`), y ninguna de las dos cosas parece un problema de
+> host. El servidor toma el `-web` automáticamente cuando el destination usa `serviceKeyPath`.
+
 Para un **ABAP Environment (Steampunk)** no sirve `OAuth2ClientCredentials`: ese token pertenece al
 cliente OAuth y a ninguna persona, y el ABAP responde 401 porque no tiene usuario con el que ejecutar.
 Hace falta un usuario nombrado, y en un subaccount con proveedor de identidad (trial, o corporativo con
@@ -423,7 +428,7 @@ sap-fiori-mcp-server/
 ```bash
 npm run build       # tsc → dist/
 npm run typecheck   # tsc --noEmit
-npm test            # vitest run (183 tests)
+npm test            # vitest run (188 tests)
 npm run test:watch  # vitest watch
 ```
 

@@ -29,6 +29,8 @@ export interface LoginOptions {
   noBrowser?: boolean;
   /** Called with the authorize URL, so a caller can show it however it likes. */
   onUrl?: (url: string) => void;
+  /** Called with the identity provider the tenant will hand the login to, when it can be found. */
+  onIdentityProvider?: (host: string) => void;
 }
 
 const base64url = (b: Buffer): string => b.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -67,6 +69,27 @@ function openBrowser(url: string): void {
     spawn(process.platform === "darwin" ? "open" : "xdg-open", [url], { detached: true, stdio: "ignore" }).unref();
   } catch {
     /* the caller prints the URL regardless */
+  }
+}
+
+/**
+ * Which identity provider the subaccount will actually ask.
+ *
+ * XSUAA answers the authorize request with a page that bounces the browser onward, and the host
+ * it bounces to is the one that will demand credentials. Saying so before the browser opens
+ * matters because BTP keeps two separate populations: the platform account used for the cockpit,
+ * and the business user the applications know. They are rarely the same, and the login page names
+ * neither — it just refuses the wrong one.
+ */
+async function identityProvider(authorizeUrl: string, timeoutMs: number): Promise<string | null> {
+  try {
+    const res = await fetch(authorizeUrl, { redirect: "follow", signal: AbortSignal.timeout(timeoutMs) });
+    const html = await res.text();
+    const meta = /<meta\s+name="redirect"\s+content="([^"]+)"/i.exec(html);
+    const target = meta?.[1]?.replace(/&amp;/g, "&");
+    return target ? new URL(target).host : null;
+  } catch {
+    return null; // best effort: never let a diagnostic aside block the login
   }
 }
 
@@ -193,8 +216,14 @@ export function loginWithBrowser(key: ParsedServiceKey, opts: LoginOptions = {})
       authorize.searchParams.set("code_challenge_method", "S256");
 
       const url = authorize.toString();
-      opts.onUrl?.(url);
-      if (!opts.noBrowser) openBrowser(url);
+      void (async () => {
+        if (opts.onIdentityProvider) {
+          const host = await identityProvider(url, 10000);
+          if (host) opts.onIdentityProvider(host);
+        }
+        opts.onUrl?.(url);
+        if (!opts.noBrowser) openBrowser(url);
+      })();
     });
   });
 }

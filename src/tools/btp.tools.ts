@@ -10,7 +10,7 @@ import {
   buildAuthHeaders,
   resolveODataTarget
 } from "../btp/destinations.js";
-import { odataRequest, appendSearchParams, extractRows } from "../odata/client.js";
+import { odataRequest, appendSearchParams, extractRows, isNotOData, notODataMessage } from "../odata/client.js";
 import { json, err, READ_REMOTE } from "./index.js";
 import { listDestinationsOutput, getDestinationOutput, queryODataOutput } from "./schemas.js";
 
@@ -201,6 +201,10 @@ export function registerBtpTools(server: McpServer, config: AppConfig, name: (n:
             },
             true
           );
+        }
+        // a login page answers 200 and parses to no rows, which must not read as "nothing matched"
+        if (isNotOData(res)) {
+          return json({ appliedUrl: url, source: target.source, status: res.status, error: notODataMessage(url, res), odataVersion: version }, true);
         }
         const { rows, inlineCount } = extractRows(res.json);
         const maxRows = args.maxRows ?? 100;

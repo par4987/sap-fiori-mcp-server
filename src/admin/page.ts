@@ -227,15 +227,16 @@ async function inspectKey() {
   try {
     const k = await call('/api/service-key/inspect', { path });
     const rows = [['tipo', k.kind], ['client id', k.clientId], ['secreto', k.clientSecret],
-                  ['UAA (token)', k.tokenUrl], ['API destinations', k.apiUrl || '—'], ['endpoint', k.endpointUrl || '—'], ['system id', k.systemId || '—']];
+                  ['UAA (token)', k.tokenUrl], ['API destinations', k.apiUrl || '—'],
+                  ['endpoint ADT', k.endpointUrl || '—'], ['endpoint OData', k.webEndpointUrl || '—'], ['system id', k.systemId || '—']];
     $('keyInfo').innerHTML = '<div class="result">' + rows.map(r =>
       '<div class="step"><span class="pill">' + r[0] + '</span><span class="mono">' + esc(r[1]) + '</span></div>').join('') +
-      (k.kind === 'abap-environment' && !$('f_url').value ? '<div class="verdict">Se rellenará la URL con el endpoint de la key.</div>' : '') +
+      (k.kind === 'abap-environment' ? '<div class="verdict">Los servicios OData se sirven en el endpoint <strong>-web</strong>; el otro es el de ADT y rechaza un token de client credentials.</div>' : '') +
       '</div>';
-    if (!$('f_url').value && k.endpointUrl) $('f_url').value = k.endpointUrl;
-    // un ABAP Environment necesita un usuario nombrado; en un subaccount con IdP eso llega
-    // como refresh token de un login por navegador, no como contraseña
-    $('f_auth').value = k.kind === 'abap-environment' ? 'OAuth2RefreshToken' : 'OAuth2ClientCredentials';
+    if (!$('f_url').value) $('f_url').value = k.webEndpointUrl || k.endpointUrl || '';
+    // client credentials basta para los servicios OData; el refresh token solo hace falta para
+    // ADT, que exige un usuario nombrado
+    $('f_auth').value = 'OAuth2ClientCredentials';
   } catch (e) { $('keyInfo').innerHTML = '<div class="err">' + esc(e.message) + '</div>'; }
 }
 

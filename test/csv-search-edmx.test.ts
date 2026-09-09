@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extractRows } from "../src/odata/client.js";
+import { extractRows, isNotOData, notODataMessage } from "../src/odata/client.js";
 import { queryCsv } from "../src/cap/csv.js";
 import { searchDocs, fuzzyNameScore } from "../src/util/search.js";
 import { searchAllDocs } from "../src/docs/index.js";
@@ -130,5 +130,39 @@ describe("extractRows across real OData response shapes", () => {
   it("returns nothing for an empty or unknown payload", () => {
     expect(extractRows(undefined).rows).toEqual([]);
     expect(extractRows({}).rows).toEqual([]);
+  });
+});
+
+// A BTP or Fiori endpoint reached without an accepted session answers 200 with a login page.
+// extractRows finds no rows in it, so an unauthenticated call used to be indistinguishable from
+// a query that legitimately matched nothing — an answer that is wrong, with no error to chase.
+describe("an endpoint that answers HTML is not answering OData", () => {
+  const html = (text = "<html>...</html>") => ({ status: 200, ok: true, headers: { "content-type": "text/html" }, text });
+
+  it("recognises HTML however the content type is spelled", () => {
+    expect(isNotOData(html())).toBe(true);
+    expect(isNotOData({ ...html(), headers: { "content-type": "text/html;charset=utf-8" } })).toBe(true);
+    expect(isNotOData({ ...html(), headers: { "content-type": "TEXT/HTML" } })).toBe(true);
+  });
+
+  it("leaves real OData responses alone", () => {
+    expect(isNotOData({ status: 200, ok: true, headers: { "content-type": "application/json" }, text: "{}" })).toBe(false);
+    expect(isNotOData({ status: 200, ok: true, headers: { "content-type": "application/xml" }, text: "<edmx/>" })).toBe(false);
+    expect(isNotOData({ status: 200, ok: true, headers: {}, text: "" })).toBe(false);
+  });
+
+  it("says a login page means the request was not authenticated", () => {
+    const message = notODataMessage("https://host/srv/Travel", html('document.cookie="fragmentAfterLogin=..."'));
+    expect(message).toContain("login page");
+    expect(message).toContain("not authenticated");
+  });
+
+  it("says an unexpected page is probably not a service", () => {
+    expect(notODataMessage("https://host/wrong", html("<html><body>Welcome</body></html>"))).toContain("not an OData service");
+  });
+
+  // the row extractor is what made the failure silent, so the pairing is worth pinning down
+  it("would otherwise have parsed to zero rows", () => {
+    expect(extractRows(undefined).rows).toEqual([]);
   });
 });

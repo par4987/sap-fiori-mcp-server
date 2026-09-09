@@ -32,6 +32,15 @@ export interface ParsedServiceKey {
   apiUrl?: string;
   /** The service's own endpoint — the ABAP system URL for an ABAP Environment key. */
   endpointUrl?: string;
+  /**
+   * Where the business services live, which is not where ADT lives.
+   *
+   * An ABAP Environment answers ADT on the host the key names and OData on the same host with
+   * `-web` in it. The distinction is not cosmetic: the ADT host refuses a client-credentials
+   * token because ADT needs a named user, while the web host accepts it. Pointing a destination
+   * at the wrong one produces a 401 that looks like bad credentials and is not.
+   */
+  webEndpointUrl?: string;
   systemId?: string;
   /** Fields the key carried that this parser did not recognise, for diagnostics. */
   unusedTopLevelKeys: string[];
@@ -79,6 +88,8 @@ export function parseServiceKey(raw: unknown): ParsedServiceKey {
   } else if (Object.keys(uaa).length) {
     parsed.kind = "abap-environment";
     parsed.endpointUrl = trimSlash(str(key.url));
+    const abapHost = /^(https?:\/\/[^.]+)\.abap\.(.+)$/.exec(parsed.endpointUrl);
+    if (abapHost) parsed.webEndpointUrl = `${abapHost[1]}.abap-web.${abapHost[2]}`;
     parsed.systemId = str(key.systemid) || undefined;
     parsed.tokenUrl = uaaRoot(str(uaa.url));
   } else if (str(key.xsappname)) {
@@ -125,6 +136,7 @@ export function describeServiceKey(key: ParsedServiceKey): Record<string, unknow
     tokenUrl: key.tokenUrl,
     apiUrl: key.apiUrl,
     endpointUrl: key.endpointUrl,
+    webEndpointUrl: key.webEndpointUrl,
     systemId: key.systemId,
     unusedTopLevelKeys: key.unusedTopLevelKeys
   };

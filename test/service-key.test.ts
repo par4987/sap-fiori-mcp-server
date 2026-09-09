@@ -65,6 +65,7 @@ describe("parseServiceKey", () => {
     const k = parseServiceKey(ABAP_KEY);
     expect(k.kind).toBe("abap-environment");
     expect(k.endpointUrl).toBe("https://a1b2-c3d4.abap.us10.hana.ondemand.com");
+    expect(k.webEndpointUrl).toBe("https://a1b2-c3d4.abap-web.us10.hana.ondemand.com");
     expect(k.tokenUrl).toBe("https://tenant.authentication.us10.hana.ondemand.com");
     expect(k.clientId).toBe("sb-abap!t123");
     expect(k.systemId).toBe("TRL");
@@ -101,8 +102,10 @@ describe("a destination backed by a service key", () => {
     expect(d.clientId).toBe("sb-abap!t123");
     expect(d.clientSecret).toBe("abap-secret");
     expect(d.tokenServiceUrl).toBe("https://tenant.authentication.us10.hana.ondemand.com");
-    // the endpoint comes from the key too, so the destination needs no URL of its own
-    expect(d.url).toBe("https://a1b2-c3d4.abap.us10.hana.ondemand.com");
+    // The endpoint comes from the key too, so the destination needs no URL of its own — and it is
+    // the -web host, because that is where an ABAP Environment serves OData. The host the key
+    // names is the ADT one, and it refuses these credentials.
+    expect(d.url).toBe("https://a1b2-c3d4.abap-web.us10.hana.ondemand.com");
     expect(d.serviceKeyPath).toBe(file);
   });
 

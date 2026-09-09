@@ -51,6 +51,12 @@ export async function runBtpLogin(opts: BtpLoginOptions): Promise<void> {
 
   const result = await loginWithBrowser(key, {
     noBrowser: opts.noBrowser,
+    onIdentityProvider: (host) => {
+      out(`You will sign in at ${host}.`);
+      out("Use the business user of that system — the one the ABAP system knows, such as CB99…—");
+      out("not the SAP.com account used for the BTP cockpit. They are different populations.");
+      out();
+    },
     onUrl: (url) => {
       if (opts.noBrowser) {
         out("Open this URL in a browser to sign in:");

@@ -109,7 +109,7 @@ export async function fetchServiceMetadata(
       if (res.ok && res.text.includes("<edmx")) {
         return { xml: res.text, model: parseEdmx(res.text), sourceUrl: candidate };
       }
-      lastError = new Error(`Metadata request to ${candidate} returned HTTP ${res.status}`);
+      lastError = new Error(isNotOData(res) ? notODataMessage(candidate, res) : `Metadata request to ${candidate} returned HTTP ${res.status}`);
     } catch (e) {
       lastError = e instanceof Error ? e : new Error(String(e));
     }
@@ -144,6 +144,29 @@ export function resolveSystem(config: AppConfig, name?: string): SapSystem | und
     return config.sapSystems.find((s) => s.name === "default") ?? config.sapSystems[0];
   }
   return config.sapSystems.find((s) => s.name.toLowerCase() === name.toLowerCase());
+}
+
+/**
+ * An OData endpoint that answers HTML is not answering OData.
+ *
+ * A BTP or Fiori endpoint reached without an accepted session replies 200 with a login page, and
+ * the row extractor finds neither `value` nor `d` in it — so an unauthenticated call used to look
+ * exactly like a query that matched nothing. Reporting zero rows for a refused request is the
+ * worst of both: no error to investigate, and an answer that is wrong.
+ */
+export function isNotOData(res: ODataResponse): boolean {
+  return (res.headers["content-type"] ?? "").toLowerCase().includes("text/html");
+}
+
+/** What to tell the caller when an endpoint answered with a page instead of data. */
+export function notODataMessage(url: string, res: ODataResponse): string {
+  const login = /fragmentAfterLogin|saml|j_username|logon|Anmeldung/i.test(res.text);
+  return (
+    `${url} answered HTTP ${res.status} with HTML instead of OData` +
+    (login
+      ? ": that is a login page, so the request was not authenticated. A token that the service does not accept looks exactly like this."
+      : ", so this path is probably not an OData service.")
+  );
 }
 
 /** V4 reports the total as a number, V2 as a string. */
