@@ -334,6 +334,16 @@ Un **destination OAuth** también puede apuntar a su service key en lugar de del
   "serviceKeyPath": "/ruta/a/abap-key.json" }
 ```
 
+Para un **ABAP Environment (Steampunk)** usa `OAuth2Password`, no `OAuth2ClientCredentials`: el ABAP
+necesita un usuario nombrado, y un token de client credentials no lleva ninguno (responde 401). El
+cliente se autentica con la service key y el usuario con sus propias credenciales:
+
+```json
+{ "Name": "BTP", "Authentication": "OAuth2Password",
+  "serviceKeyPath": "/ruta/a/btp-key.json",
+  "User": "CB0000000001", "Password": "${env:BTP_USER_PASSWORD}" }
+```
+
 Se entienden las tres formas que emite BTP: la del Destination service (`uri` + `url`), la de ABAP Environment
 (credenciales bajo `uaa`, y de la que se toma también la URL del sistema) y la de XSUAA.
 
@@ -397,7 +407,7 @@ sap-fiori-mcp-server/
 ```bash
 npm run build       # tsc → dist/
 npm run typecheck   # tsc --noEmit
-npm test            # vitest run (164 tests)
+npm test            # vitest run (168 tests)
 npm run test:watch  # vitest watch
 ```
 

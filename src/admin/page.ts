@@ -102,7 +102,8 @@ export const PAGE = /* html */ `<!doctype html>
     <div><label>Usuario</label><input id="f_user"></div>
     <div id="wrap_auth" hidden><label>Autenticación</label><select id="f_auth">
       <option>NoAuthentication</option><option>BasicAuthentication</option>
-      <option>OAuth2ClientCredentials</option><option>OAuth2UserTokenExchange</option><option>OAuth2JWTBearer</option>
+      <option>OAuth2ClientCredentials</option><option>OAuth2Password</option>
+      <option>OAuth2UserTokenExchange</option><option>OAuth2JWTBearer</option>
     </select></div>
     <div id="wrap_proxy" hidden><label>ProxyType</label><select id="f_proxy"><option>Internet</option><option>OnPremise</option></select></div>
     <div style="grid-column:1/-1" id="wrap_key" hidden>
@@ -232,7 +233,8 @@ async function inspectKey() {
       (k.kind === 'abap-environment' && !$('f_url').value ? '<div class="verdict">Se rellenará la URL con el endpoint de la key.</div>' : '') +
       '</div>';
     if (!$('f_url').value && k.endpointUrl) $('f_url').value = k.endpointUrl;
-    if (k.kind !== 'xsuaa') $('f_auth').value = 'OAuth2ClientCredentials';
+    // un ABAP Environment necesita usuario nombrado: client credentials da un token sin usuario
+    $('f_auth').value = k.kind === 'abap-environment' ? 'OAuth2Password' : 'OAuth2ClientCredentials';
   } catch (e) { $('keyInfo').innerHTML = '<div class="err">' + esc(e.message) + '</div>'; }
 }
 

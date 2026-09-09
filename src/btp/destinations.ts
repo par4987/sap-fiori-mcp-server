@@ -30,6 +30,7 @@ export type DestinationAuthType =
   | "NoAuthentication"
   | "BasicAuthentication"
   | "OAuth2ClientCredentials"
+  | "OAuth2Password"
   | "OAuth2UserTokenExchange"
   | "OAuth2JWTBearer"
   | "ClientCertificateAuthentication"
@@ -68,6 +69,7 @@ const AUTH_TYPES: DestinationAuthType[] = [
   "NoAuthentication",
   "BasicAuthentication",
   "OAuth2ClientCredentials",
+  "OAuth2Password",
   "OAuth2UserTokenExchange",
   "OAuth2JWTBearer",
   "ClientCertificateAuthentication",
@@ -388,6 +390,34 @@ export async function buildAuthHeaders(d: BtpDestination, timeoutMs = 30000): Pr
       if (d.username && d.password) headers.authorization = `Basic ${Buffer.from(`${d.username}:${d.password}`).toString("base64")}`;
       else if (d.username) logger.warn("Destination has username but no password", { name: d.name });
       break;
+    /**
+     * The grant a BTP ABAP Environment actually needs.
+     *
+     * Client credentials buy a token that belongs to the OAuth client, not to a person, and an
+     * ABAP system answers 401 to it because it has no user to run as. Development against
+     * Steampunk needs a *named* user, so the service key's client id and secret authenticate the
+     * client while the user's own credentials identify who is asking.
+     */
+    case "OAuth2Password": {
+      if (!d.username || !d.password) {
+        throw new Error(
+          `Destination '${d.name}': the password grant needs a BTP user and password. Set User and Password on the destination ` +
+            "(the password as ${env:NAME}); the client id and secret come from the service key."
+        );
+      }
+      if (!d.clientId || !d.clientSecret) {
+        throw new Error(`Destination '${d.name}': the password grant needs the OAuth client, normally supplied by serviceKeyPath.`);
+      }
+      const token = await fetchOAuthToken(
+        d,
+        { grant_type: "password", username: d.username, password: d.password, response_type: "token" },
+        timeoutMs,
+        d.clientId,
+        d.clientSecret
+      );
+      headers.authorization = `Bearer ${token}`;
+      break;
+    }
     case "OAuth2ClientCredentials": {
       const useCreds = !!(d.clientId && d.clientSecret);
       const token = await fetchOAuthToken(d, { grant_type: "client_credentials" }, timeoutMs, useCreds ? d.clientId : d.tokenServiceUser, useCreds ? d.clientSecret : d.tokenServicePassword);

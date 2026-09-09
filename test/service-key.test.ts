@@ -10,7 +10,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseServiceKey, readServiceKeyFile, describeServiceKey } from "../src/btp/service-key.js";
-import { normalizeDestination, getDestinationServiceConfig } from "../src/btp/destinations.js";
+import { normalizeDestination, getDestinationServiceConfig, buildAuthHeaders } from "../src/btp/destinations.js";
 
 const DESTINATION_KEY = {
   clientid: "sb-clone-abc!b123|destination-xsappname!b45",
@@ -143,5 +143,52 @@ describe("destination service from a service key", () => {
     vi.stubEnv("BTP_CLIENT_ID", "cid");
     vi.stubEnv("BTP_CLIENT_SECRET", "secret");
     expect(getDestinationServiceConfig()?.apiUrl).toBe("https://api.example");
+  });
+});
+
+// Client credentials buy a token that belongs to the OAuth client and to no user, which an ABAP
+// system answers 401 to. Steampunk development needs the password grant with a named user.
+describe("the password grant for a BTP ABAP Environment", () => {
+  const base = (over: Record<string, unknown> = {}) =>
+    normalizeDestination({ Name: "TRL", URL: "https://abap.example", Authentication: "OAuth2Password", ...over }, "file");
+
+  it("is a recognised authentication type", () => {
+    expect(base().authType).toBe("OAuth2Password");
+  });
+
+  it("refuses without a named user, and says why", async () => {
+    const file = write("abap.json", ABAP_KEY);
+    await expect(buildAuthHeaders(base({ serviceKeyPath: file }), 2000)).rejects.toThrow(/needs a BTP user and password/);
+  });
+
+  it("refuses without the OAuth client and points at the service key", async () => {
+    await expect(buildAuthHeaders(base({ User: "CB000", Password: "pw" }), 2000)).rejects.toThrow(/serviceKeyPath/);
+  });
+
+  it("sends grant_type=password with the user, authenticating the client from the key", async () => {
+    const file = write("abap.json", ABAP_KEY);
+    const seen: { url: string; body: string; auth: string }[] = [];
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+      seen.push({
+        url: String(url),
+        body: String(init?.body ?? ""),
+        auth: String((init?.headers as Record<string, string>)?.authorization ?? "")
+      });
+      return new Response(JSON.stringify({ access_token: "the-token" }), { status: 200 });
+    }) as typeof fetch;
+
+    try {
+      const headers = await buildAuthHeaders(base({ serviceKeyPath: file, User: "CB0000000001", Password: "user-pw" }), 5000);
+      expect(headers.authorization).toBe("Bearer the-token");
+      expect(seen[0].url).toBe("https://tenant.authentication.us10.hana.ondemand.com/oauth/token");
+      const body = new URLSearchParams(seen[0].body);
+      expect(body.get("grant_type")).toBe("password");
+      expect(body.get("username")).toBe("CB0000000001");
+      // the client is authenticated with the key's credentials, not the user's
+      expect(Buffer.from(seen[0].auth.replace("Basic ", ""), "base64").toString()).toBe("sb-abap!t123:abap-secret");
+    } finally {
+      globalThis.fetch = original;
+    }
   });
 });
