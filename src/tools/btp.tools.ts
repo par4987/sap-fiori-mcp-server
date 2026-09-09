@@ -89,7 +89,7 @@ export function registerBtpTools(server: McpServer, config: AppConfig, name: (n:
         const redacted = redactDestination(d);
         let authSummary: Record<string, unknown> = { authType: d.authType };
         try {
-          const headers = await buildAuthHeaders(d, config.requestTimeoutMs);
+          const headers = await buildAuthHeaders(d, config.requestTimeoutMs, config.dataDir);
           authSummary = {
             authType: d.authType,
             resolvedHeaders: Object.keys(headers),

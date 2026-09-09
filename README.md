@@ -343,14 +343,19 @@ SSO) eso no es una contraseña sino un **refresh token** de un login por navegad
 npx @pired/sap-fiori-mcp-server --btp-login --destination BTP
 ```
 
-Abre el navegador, haces login como siempre (SSO y segundo factor incluidos), e imprime el refresh
-token con el comando exacto para guardarlo en el entorno. Luego el destination usa:
+Abre el navegador, haces login como siempre (SSO y segundo factor incluidos) y **guarda el refresh
+token él mismo**, en `~/.sap-fiori-mcp/tokens/<destination>.json`. En Windows va sellado con DPAPI:
+solo ese usuario de Windows y en esa máquina puede abrirlo. Después basta con poner el destination
+en `OAuth2RefreshToken`; no hay que copiar nada:
 
 ```json
 { "Name": "BTP", "Authentication": "OAuth2RefreshToken",
-  "serviceKeyPath": "/ruta/a/btp-key.json",
-  "refreshToken": "${env:BTP_REFRESH_TOKEN}" }
+  "serviceKeyPath": "/ruta/a/btp-key.json" }
 ```
+
+Si prefieres gestionarlo tú, un `refreshToken` explícito como `${env:NOMBRE}` tiene prioridad sobre
+el almacén. Es el único secreto que este servidor guarda en un fichero propio, y lo hace porque lo
+genera él: pedirte que lo copies a mano sería un paso manual para un valor que nadie eligió.
 
 El flujo es *authorization code* con PKCE y redirect a loopback, el mismo que usa Eclipse ADT.
 `OAuth2Password` sigue disponible para subaccounts cuyos usuarios viven en la propia UAA.
@@ -418,7 +423,7 @@ sap-fiori-mcp-server/
 ```bash
 npm run build       # tsc → dist/
 npm run typecheck   # tsc --noEmit
-npm test            # vitest run (174 tests)
+npm test            # vitest run (183 tests)
 npm run test:watch  # vitest watch
 ```
 

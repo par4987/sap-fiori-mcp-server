@@ -573,7 +573,7 @@ export async function validateDestination(name: string, servicePath?: string, ti
 
   let headers: Record<string, string>;
   try {
-    headers = await buildAuthHeaders(destination, timeoutMs);
+    headers = await buildAuthHeaders(destination, timeoutMs, config.dataDir);
     const kind = headers.authorization?.startsWith("Basic ") ? "Basic" : headers.authorization ? "Bearer (token obtained)" : "none";
     steps.push({ label: `Authentication resolved (${destination.authType})`, path: destination.tokenServiceUrl ?? "-", status: 200, ok: true, detail: kind });
   } catch (e) {

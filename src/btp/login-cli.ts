@@ -10,6 +10,7 @@ import type { AppConfig } from "../config.js";
 import { loadDestinations } from "./destinations.js";
 import { loginWithBrowser } from "./login.js";
 import { readServiceKeyFile } from "./service-key.js";
+import { saveRefreshToken } from "./token-store.js";
 
 export interface BtpLoginOptions {
   keyPath: string;
@@ -65,23 +66,26 @@ export async function runBtpLogin(opts: BtpLoginOptions): Promise<void> {
     }
   });
 
-  const store = process.platform === "win32" ? `setx BTP_REFRESH_TOKEN "${result.refreshToken}"` : `export BTP_REFRESH_TOKEN='${result.refreshToken}'`;
+  const target = opts.destination || "default";
+  const saved = saveRefreshToken(opts.config.dataDir, target, result.refreshToken);
 
   out();
-  out("Signed in. This refresh token stands in for you from now on:");
+  out(`Signed in. The refresh token now stands in for you, and it is stored for '${target}':`);
   out();
-  out(`  ${result.refreshToken}`);
+  out(`  ${saved.file}`);
+  out(
+    saved.kind === "dpapi"
+      ? "  sealed with DPAPI — only this Windows user on this machine can read it"
+      : "  stored in the clear with owner-only permissions; this platform offers no sealing this tool can rely on"
+  );
   out();
-  out("Treat it like a password — anything holding it can act as you on that system.");
-  out("Store it in the environment, which is where this server reads it from:");
-  out();
-  out(`  ${store}`);
-  out();
-  out("Then set the destination's Authentication to OAuth2RefreshToken. It reads BTP_REFRESH_TOKEN,");
-  out('or the destination\'s own refreshToken field written as ${env:NAME}.');
-  if (process.platform === "win32") {
-    out();
-    out("setx writes it for future processes: reopen the terminal (and this session) before testing.");
+  if (opts.destination) {
+    out(`Set the destination's Authentication to OAuth2RefreshToken and it will use this token.`);
+  } else {
+    out("Run this again with --destination <name> to store the token for a specific destination,");
+    out("or set the destination's refreshToken to ${env:NAME} to keep using an environment variable.");
   }
+  out();
+  out("Treat the stored file like a password: anything able to read it can act as you on that system.");
   out();
 }

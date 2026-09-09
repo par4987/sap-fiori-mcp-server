@@ -24,6 +24,7 @@ import { logger } from "../logger.js";
 import { stripBom } from "../util/fs.js";
 import { expandEnvRefsDeep } from "../util/envref.js";
 import { readServiceKeyFile } from "./service-key.js";
+import { readRefreshToken } from "./token-store.js";
 import { resolveSystem } from "../odata/client.js";
 
 export type DestinationAuthType =
@@ -385,7 +386,7 @@ async function fetchOAuthToken(d: BtpDestination, params: Record<string, string>
 }
 
 /** Build the HTTP headers to call the destination URL (async: may exchange an OAuth token). */
-export async function buildAuthHeaders(d: BtpDestination, timeoutMs = 30000): Promise<Record<string, string>> {
+export async function buildAuthHeaders(d: BtpDestination, timeoutMs = 30000, dataDir?: string): Promise<Record<string, string>> {
   const headers: Record<string, string> = {};
   if (d.client) headers["sap-client"] = d.client;
   if (d.headers) Object.assign(headers, d.headers);
@@ -404,10 +405,13 @@ export async function buildAuthHeaders(d: BtpDestination, timeoutMs = 30000): Pr
      * for them from then on. The service key's client authenticates the exchange.
      */
     case "OAuth2RefreshToken": {
+      // an explicit ${env:...} still wins; the store is the default so nobody has to copy a
+      // token this tool minted itself
+      if (!d.refreshToken && dataDir) d.refreshToken = readRefreshToken(dataDir, d.name) ?? undefined;
       if (!d.refreshToken) {
         throw new Error(
           `Destination '${d.name}': the refresh_token grant needs a token from a one-time browser login. ` +
-            "Set refreshToken on the destination (as ${env:NAME}) or the BTP_REFRESH_TOKEN environment variable."
+            "Run --btp-login to obtain one, or set refreshToken on the destination as ${env:NAME}."
         );
       }
       if (!d.clientId || !d.clientSecret) {
@@ -526,7 +530,7 @@ export async function resolveODataTarget(
     }
     const base = p.serviceUrl ?? (p.servicePath ? joinUrl(d.url, p.servicePath) : d.url);
     if (!base) throw new Error(`Destination '${d.name}' has no URL and no servicePath/serviceUrl was provided.`);
-    const headers = await buildAuthHeaders(d, timeoutMs);
+    const headers = await buildAuthHeaders(d, timeoutMs, config.dataDir);
     return { url: base, headers, source: `destination:${d.name}`, destination: redactDestination(d), trustedUrls: [d.url] };
   }
 
