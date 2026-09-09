@@ -334,15 +334,26 @@ Un **destination OAuth** también puede apuntar a su service key en lugar de del
   "serviceKeyPath": "/ruta/a/abap-key.json" }
 ```
 
-Para un **ABAP Environment (Steampunk)** usa `OAuth2Password`, no `OAuth2ClientCredentials`: el ABAP
-necesita un usuario nombrado, y un token de client credentials no lleva ninguno (responde 401). El
-cliente se autentica con la service key y el usuario con sus propias credenciales:
+Para un **ABAP Environment (Steampunk)** no sirve `OAuth2ClientCredentials`: ese token pertenece al
+cliente OAuth y a ninguna persona, y el ABAP responde 401 porque no tiene usuario con el que ejecutar.
+Hace falta un usuario nombrado, y en un subaccount con proveedor de identidad (trial, o corporativo con
+SSO) eso no es una contraseña sino un **refresh token** de un login por navegador hecho una vez:
+
+```bash
+npx @pired/sap-fiori-mcp-server --btp-login --destination BTP
+```
+
+Abre el navegador, haces login como siempre (SSO y segundo factor incluidos), e imprime el refresh
+token con el comando exacto para guardarlo en el entorno. Luego el destination usa:
 
 ```json
-{ "Name": "BTP", "Authentication": "OAuth2Password",
+{ "Name": "BTP", "Authentication": "OAuth2RefreshToken",
   "serviceKeyPath": "/ruta/a/btp-key.json",
-  "User": "CB0000000001", "Password": "${env:BTP_USER_PASSWORD}" }
+  "refreshToken": "${env:BTP_REFRESH_TOKEN}" }
 ```
+
+El flujo es *authorization code* con PKCE y redirect a loopback, el mismo que usa Eclipse ADT.
+`OAuth2Password` sigue disponible para subaccounts cuyos usuarios viven en la propia UAA.
 
 Se entienden las tres formas que emite BTP: la del Destination service (`uri` + `url`), la de ABAP Environment
 (credenciales bajo `uaa`, y de la que se toma también la URL del sistema) y la de XSUAA.
@@ -407,7 +418,7 @@ sap-fiori-mcp-server/
 ```bash
 npm run build       # tsc → dist/
 npm run typecheck   # tsc --noEmit
-npm test            # vitest run (168 tests)
+npm test            # vitest run (174 tests)
 npm run test:watch  # vitest watch
 ```
 

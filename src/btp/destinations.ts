@@ -31,6 +31,7 @@ export type DestinationAuthType =
   | "BasicAuthentication"
   | "OAuth2ClientCredentials"
   | "OAuth2Password"
+  | "OAuth2RefreshToken"
   | "OAuth2UserTokenExchange"
   | "OAuth2JWTBearer"
   | "ClientCertificateAuthentication"
@@ -52,6 +53,8 @@ export interface BtpDestination {
   tokenServiceUser?: string;
   tokenServicePassword?: string;
   userToken?: string;
+  /** Long-lived token from a one-time browser login, for the refresh_token grant. */
+  refreshToken?: string;
   headers?: Record<string, string>;
   /** Service key file this destination took its OAuth credentials from, when it used one. */
   serviceKeyPath?: string;
@@ -70,6 +73,7 @@ const AUTH_TYPES: DestinationAuthType[] = [
   "BasicAuthentication",
   "OAuth2ClientCredentials",
   "OAuth2Password",
+  "OAuth2RefreshToken",
   "OAuth2UserTokenExchange",
   "OAuth2JWTBearer",
   "ClientCertificateAuthentication",
@@ -128,6 +132,7 @@ export function normalizeDestination(raw: Record<string, unknown>, source: Desti
     tokenServiceUser: pick(raw, ["tokenServiceUser", "tokenServiceUsername"]) || undefined,
     tokenServicePassword: pick(raw, ["tokenServicePassword", "tokenServiceUserPassword"]) || undefined,
     userToken: pick(raw, ["userToken", "user_token", "bearerToken"]) || process.env.BTP_USER_TOKEN?.trim() || undefined,
+    refreshToken: pick(raw, ["refreshToken", "refresh_token", "RefreshToken"]) || process.env.BTP_REFRESH_TOKEN?.trim() || undefined,
     headers: Object.keys(customHeaders).length ? customHeaders : undefined,
     serviceKeyPath: serviceKeyPath || undefined,
     source
@@ -224,6 +229,7 @@ export function redactDestination(d: BtpDestination): Record<string, unknown> {
     tokenServiceUser: d.tokenServiceUser,
     tokenServicePassword: d.tokenServicePassword ? REDACTED : undefined,
     userToken: d.userToken ? REDACTED : undefined,
+    refreshToken: d.refreshToken ? REDACTED : undefined,
     customHeaders: d.headers ? Object.keys(d.headers) : [],
     serviceKeyPath: d.serviceKeyPath,
     source: d.source
@@ -391,12 +397,40 @@ export async function buildAuthHeaders(d: BtpDestination, timeoutMs = 30000): Pr
       else if (d.username) logger.warn("Destination has username but no password", { name: d.name });
       break;
     /**
-     * The grant a BTP ABAP Environment actually needs.
+     * What a BTP ABAP Environment on a trial subaccount actually needs.
      *
-     * Client credentials buy a token that belongs to the OAuth client, not to a person, and an
-     * ABAP system answers 401 to it because it has no user to run as. Development against
-     * Steampunk needs a *named* user, so the service key's client id and secret authenticate the
-     * client while the user's own credentials identify who is asking.
+     * The identity provider owns the user, so there is no password to send to the UAA: the
+     * operator logs in through a browser once, and the refresh token that comes back stands in
+     * for them from then on. The service key's client authenticates the exchange.
+     */
+    case "OAuth2RefreshToken": {
+      if (!d.refreshToken) {
+        throw new Error(
+          `Destination '${d.name}': the refresh_token grant needs a token from a one-time browser login. ` +
+            "Set refreshToken on the destination (as ${env:NAME}) or the BTP_REFRESH_TOKEN environment variable."
+        );
+      }
+      if (!d.clientId || !d.clientSecret) {
+        throw new Error(`Destination '${d.name}': the refresh_token grant needs the OAuth client, normally supplied by serviceKeyPath.`);
+      }
+      const token = await fetchOAuthToken(
+        d,
+        { grant_type: "refresh_token", refresh_token: d.refreshToken },
+        timeoutMs,
+        d.clientId,
+        d.clientSecret
+      );
+      headers.authorization = `Bearer ${token}`;
+      break;
+    }
+    /**
+     * For a subaccount whose users live in the UAA itself.
+     *
+     * Client credentials buy a token that belongs to the OAuth client and to no person, which an
+     * ABAP system answers 401 to because it has nobody to run as — so a named user is needed
+     * either way. This grant supplies one directly, but only works where the UAA holds the
+     * password. A trial subaccount delegates to an identity provider and has none, and there
+     * OAuth2RefreshToken is the grant that applies.
      */
     case "OAuth2Password": {
       if (!d.username || !d.password) {

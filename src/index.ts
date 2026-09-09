@@ -5,6 +5,7 @@ import { initLogger, logger } from "./logger.js";
 import { createMcpServer } from "./server.js";
 import { startHttpServer } from "./http.js";
 import { startAdminServer } from "./admin/server.js";
+import { runBtpLogin } from "./btp/login-cli.js";
 
 function printHelp(): void {
   process.stdout.write(
@@ -17,6 +18,9 @@ Usage:
 
 Options:
   --admin           Open the local connection admin panel (127.0.0.1 only) and exit
+  --btp-login       Sign in to BTP through the browser once and print a refresh token
+                    Use with --key <service-key.json> or --destination <name>
+                    Add --no-browser to print the URL instead of opening it
   --http            Run with HTTP Streamable transport instead of stdio
   --port <n>        HTTP port (default 3001 or SAP_FIORI_MCP_PORT)
   --host <addr>     HTTP bind address (default 127.0.0.1)
@@ -60,6 +64,16 @@ async function main(): Promise<void> {
 
   const config = loadConfig(argv);
   initLogger(config);
+
+  if (argv.includes("--btp-login")) {
+    await runBtpLogin({
+      keyPath: flagValue(argv, "--key", ""),
+      destination: flagValue(argv, "--destination", ""),
+      noBrowser: argv.includes("--no-browser"),
+      config
+    });
+    return;
+  }
 
   if (argv.includes("--admin")) {
     const admin = await startAdminServer(Number(flagValue(argv, "--port", process.env.SAP_FIORI_MCP_ADMIN_PORT ?? "7392")));
