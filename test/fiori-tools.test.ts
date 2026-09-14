@@ -168,6 +168,28 @@ describe("generateFioriApp", () => {
     ).rejects.toThrow(/already exists/);
   });
 
+  it("writes the service uri as a root, so its own validation raises nothing", async () => {
+    const ws = path.join(tmp, "gen-slash", "ws");
+    fs.mkdirSync(ws, { recursive: true });
+    const result = await generateFioriApp({
+      targetPath: ws,
+      appName: "bookings",
+      title: "Bookings",
+      entitySet: "Booking",
+      // a service path as it comes back from a catalog: no trailing slash
+      serviceUrl: "https://abap.example.com/sap/opu/odata/sap/ZUI_FE_BOOKING_000110_O2",
+      odataVersion: "2.0",
+      floorplan: "list-report",
+      isCap: false
+    });
+    const manifest = JSON.parse(fs.readFileSync(path.join(result.appPath, "webapp", "manifest.json"), "utf8"));
+    expect(manifest["sap.app"]["dataSources"]["mainService"]["uri"]).toBe(
+      "https://abap.example.com/sap/opu/odata/sap/ZUI_FE_BOOKING_000110_O2/"
+    );
+    const check = await validateManifest(result.appPath);
+    expect(check.issues).toEqual([]);
+  });
+
   it("writes an app id the manifest validation accepts, whatever the app is called", async () => {
     const ws = path.join(tmp, "gen-dashes", "ws");
     fs.mkdirSync(ws, { recursive: true });

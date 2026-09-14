@@ -106,6 +106,12 @@ export async function generateFioriApp(params: {
     );
   }
 
+  // a service root ends in a slash: UI5 appends the entity set to it, and the manifest check this
+  // tool ships with says so. A URL that named a document rather than a root keeps its shape.
+  if (serviceUri && !serviceUri.endsWith("/") && !serviceUri.includes(".svc") && !serviceUri.includes("$") && !serviceUri.includes("?")) {
+    serviceUri = `${serviceUri}/`;
+  }
+
   const odataVersion: "2.0" | "4.0" =
     params.odataVersion ?? (metadataXml ? parseEdmx(metadataXml).version : "4.0");
 

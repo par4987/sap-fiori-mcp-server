@@ -64,7 +64,7 @@ export function validateManifest(appPathOrManifest: string): ValidationResult {
         if (!d["uri"] && !settings["localUri"]) issues.push({ severity: "warning", rule: "dataSource.uri", message: `dataSources/${name} has no uri/localUri`, path: `sap.app/dataSources/${name}` });
         const uri = String(d["uri"] ?? "");
         if (uri && !uri.endsWith("/") && !uri.includes(".svc") && !uri.includes("$")) {
-          issues.push({ severity: "warning", rule: "dataSource.uri.trailing-slash", message: `dataSources/${name} uri '${uri}' usually ends with '/' for V4 services`, path: `sap.app/dataSources/${name}` });
+          issues.push({ severity: "warning", rule: "dataSource.uri.trailing-slash", message: `dataSources/${name} uri '${uri}' usually ends with '/': UI5 appends the entity set to it`, path: `sap.app/dataSources/${name}` });
         }
       }
       if (String(d["type"] ?? "") === "ODataAnnotation" && !d["uri"] && !(d["settings"] as Record<string, unknown>)?.["localUri"]) {

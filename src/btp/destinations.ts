@@ -297,6 +297,23 @@ export function getDestinationServiceConfig(): DestinationServiceConfig | null {
   return null;
 }
 
+/**
+ * What the UAA said, rather than only the status code it said it with.
+ *
+ * A 401 from the token endpoint has several unrelated causes — a wrong client secret, a revoked
+ * client, an expired refresh token — and they need different fixes. The body names which one it is,
+ * and dropping it turned an expired token into what looked like a broken service key. Only the
+ * error fields are read: the response is never echoed wholesale, so nothing secret rides along.
+ */
+async function tokenErrorDetail(res: Response): Promise<string> {
+  try {
+    const parsed = JSON.parse(await res.text()) as { error?: string; error_description?: string };
+    return parsed.error_description ?? parsed.error ?? "";
+  } catch {
+    return "";
+  }
+}
+
 async function fetchXsuaaToken(svc: DestinationServiceConfig, timeoutMs: number): Promise<string> {
   const url = `${svc.tokenUrl}/oauth/token?grant_type=client_credentials`;
   const auth = Buffer.from(`${svc.clientId}:${svc.clientSecret}`).toString("base64");
@@ -305,7 +322,10 @@ async function fetchXsuaaToken(svc: DestinationServiceConfig, timeoutMs: number)
     headers: { authorization: `Basic ${auth}`, accept: "application/json" },
     signal: AbortSignal.timeout(timeoutMs)
   });
-  if (!res.ok) throw new Error(`XSUAA token request failed (HTTP ${res.status})`);
+  if (!res.ok) {
+    const detail = await tokenErrorDetail(res);
+    throw new Error(`XSUAA token request failed (HTTP ${res.status})${detail ? `: ${detail}` : ""}`);
+  }
   const body = (await res.json()) as { access_token?: string };
   if (!body.access_token) throw new Error("XSUAA token response contains no access_token");
   return body.access_token;
@@ -381,7 +401,16 @@ async function fetchOAuthToken(d: BtpDestination, params: Record<string, string>
   if (basicUser && basicPassword) headers.authorization = `Basic ${Buffer.from(`${basicUser}:${basicPassword}`).toString("base64")}`;
   const body = new URLSearchParams(params).toString();
   const res = await fetch(`${tokenUrl.replace(/\/$/, "")}/oauth/token`, { method: "POST", headers, body, signal: AbortSignal.timeout(timeoutMs) });
-  if (!res.ok) throw new Error(`Destination '${d.name}': OAuth token request failed (HTTP ${res.status})`);
+  if (!res.ok) {
+    const detail = await tokenErrorDetail(res);
+    // an expired refresh token is the one cause with a fix the caller can act on, and the panel
+    // was the only place that ever said so
+    const fix =
+      params.grant_type === "refresh_token"
+        ? ` Run 'sap-fiori-mcp --btp-login --destination ${d.name}' to sign in again.`
+        : "";
+    throw new Error(`Destination '${d.name}': OAuth token request failed (HTTP ${res.status})${detail ? `: ${detail}` : ""}${fix}`);
+  }
   const json = (await res.json()) as { access_token?: string };
   if (!json.access_token) throw new Error(`Destination '${d.name}': token response contains no access_token`);
   return json.access_token;

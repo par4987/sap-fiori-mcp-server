@@ -104,6 +104,32 @@ describe("BTP destinations: auth headers", () => {
   });
 });
 
+describe("when the UAA refuses a token", () => {
+  it("repeats what it said and how to fix an expired refresh token", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({ error: "invalid_token", error_description: "The token expired, was revoked, or the token ID is incorrect." }, 401)
+      )
+    );
+    const d = normalizeDestination(
+      {
+        Name: "BTP",
+        URL: "https://abap.example.com",
+        Authentication: "OAuth2RefreshToken",
+        clientId: "cid",
+        clientSecret: "cs",
+        tokenServiceUrl: "https://auth.example.com",
+        refreshToken: "rt"
+      },
+      "env"
+    );
+    // a bare "HTTP 401" reads like a broken service key; the cause and the cure both matter
+    await expect(buildAuthHeaders(d)).rejects.toThrow(/The token expired, was revoked/);
+    await expect(buildAuthHeaders(d)).rejects.toThrow(/--btp-login --destination BTP/);
+  });
+});
+
 describe("BTP Destination Service", () => {
   it("detects explicit env configuration", () => {
     vi.stubEnv("BTP_CLIENT_ID", "cid");
