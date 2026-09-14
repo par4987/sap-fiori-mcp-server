@@ -181,6 +181,35 @@ describe("choosing the entity set to build on", () => {
     expect(pickMainEntitySet(parseEdmx(xml))).toBe("Travel");
   });
 
+  it("passes over a value help, which is listable but is not what an app opens on", () => {
+    // a value help needs UI.LineItem for its popup table; only a business entity gets an object page
+    const xml = TRAVEL_V4.replace(
+      '<Annotations Target="SAP__self.Container/Travel"><Annotation Term="SAP__common.DraftRoot"/></Annotations>',
+      ""
+    ).replace(
+      '<Annotations Target="SAP__self.TravelType"><Annotation Term="SAP__UI.LineItem"/></Annotations>',
+      '<Annotations Target="SAP__self.TravelType"><Annotation Term="SAP__UI.LineItem"/><Annotation Term="SAP__UI.HeaderInfo"/></Annotations>'
+    );
+    expect(pickMainEntitySet(parseEdmx(xml))).toBe("Travel");
+  });
+
+  it("prefers the entity that carries the filter bar when several have object pages", () => {
+    const xml = TRAVEL_V4.replace(
+      '<Annotations Target="SAP__self.Container/Travel"><Annotation Term="SAP__common.DraftRoot"/></Annotations>',
+      ""
+    )
+      .replace(
+        '<Annotations Target="SAP__self.BookingType"><Annotation Term="SAP__UI.LineItem"/></Annotations>',
+        '<Annotations Target="SAP__self.BookingType"><Annotation Term="SAP__UI.LineItem"/><Annotation Term="SAP__UI.HeaderInfo"/></Annotations>'
+      )
+      .replace(
+        '<Annotations Target="SAP__self.TravelType"><Annotation Term="SAP__UI.LineItem"/></Annotations>',
+        '<Annotations Target="SAP__self.TravelType"><Annotation Term="SAP__UI.LineItem"/><Annotation Term="SAP__UI.HeaderInfo"/><Annotation Term="SAP__UI.SelectionFields"/></Annotations>'
+      );
+    // Booking still comes first in the document, and both navigate to each other
+    expect(pickMainEntitySet(parseEdmx(xml))).toBe("Travel");
+  });
+
   it("says nothing when no set is annotated, leaving the caller its own default", () => {
     const xml = TRAVEL_V4.replace(/<Annotations[^]*?<\/Annotations>/g, "");
     expect(pickMainEntitySet(parseEdmx(xml))).toBeUndefined();

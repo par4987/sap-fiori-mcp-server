@@ -31,7 +31,18 @@ export function normalizeAppId(input: string, appName: string): { namespace: str
  * (`SAP__UI.LineItem`), or fully qualified (`com.sap.vocabularies.UI.v1.LineItem`). Matching only
  * the bare form finds nothing in a real ABAP service, which is exactly where this has to work.
  */
-const isLineItem = (term: string): boolean => /(?:^|\.)[A-Za-z0-9_]*UI(?:\.v\d+)?\.LineItem$/.test(term);
+const uiTerm = (name: string): RegExp => new RegExp(`(?:^|\.)[A-Za-z0-9_]*UI(?:\.v\d+)?\.${name}$`);
+const isLineItem = (term: string): boolean => uiTerm("LineItem").test(term);
+
+/**
+ * A term that only a business entity gets: the header and facets of an object page.
+ *
+ * A value help carries UI.LineItem too — it needs a table for its popup — so LineItem alone picks
+ * out the status code list as readily as the travel it belongs to. Nobody writes an object page for
+ * a value help, which is what makes this the line between them.
+ */
+const hasObjectPage = (terms: string[]): boolean =>
+  terms.some((t) => uiTerm("HeaderInfo").test(t) || uiTerm("Facets").test(t));
 
 /**
  * Which entity set the app should be built on when the caller did not name one.
@@ -52,8 +63,17 @@ export function pickMainEntitySet(model: EdmxModel): string | undefined {
   const listable = new Set(
     model.annotations.filter((a) => a.terms.some((t) => isLineItem(t.term))).map((a) => short(a.target))
   );
-  const candidates = model.entitySets.filter((set) => listable.has(short(set.entityType)));
-  if (!candidates.length) return undefined;
+  const termsByType = new Map<string, string[]>();
+  for (const a of model.annotations) {
+    const key = short(a.target);
+    termsByType.set(key, [...(termsByType.get(key) ?? []), ...a.terms.map((t) => t.term)]);
+  }
+
+  const listables = model.entitySets.filter((set) => listable.has(short(set.entityType)));
+  if (!listables.length) return undefined;
+  // value helps are listable but are not what an app opens on; keep them only if nothing else is left
+  const withPage = listables.filter((set) => hasObjectPage(termsByType.get(short(set.entityType)) ?? []));
+  const candidates = withPage.length ? withPage : listables;
 
   // the container entry is targeted as '<alias>.Container/<set>', so the set name is the last segment
   const draftRoots = new Set(
@@ -63,6 +83,10 @@ export function pickMainEntitySet(model: EdmxModel): string | undefined {
   );
   const declaredRoot = candidates.find((c) => draftRoots.has(c.name));
   if (declaredRoot) return declaredRoot.name;
+
+  // a filter bar belongs to the page an app opens on, and a child list never gets one
+  const filtered = candidates.find((c) => (termsByType.get(short(c.entityType)) ?? []).some((t) => uiTerm("SelectionFields").test(t)));
+  if (filtered) return filtered.name;
 
   const names = new Set(candidates.map((c) => c.name));
   const reachable = new Set<string>();
