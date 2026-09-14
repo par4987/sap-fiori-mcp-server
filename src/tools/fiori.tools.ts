@@ -10,6 +10,7 @@ import { resolvePath, readText, writeFileSafe, relativePaths } from "../util/fs.
 import { resolveSystem, fetchServiceMetadata } from "../odata/client.js";
 import { resolveODataTarget, resolveODataUrl } from "../btp/destinations.js";
 import { parseEdmx } from "../odata/edmx.js";
+import { fetchAnnotationDocuments } from "../odata/annotations.js";
 import { json, err, READ_LOCAL, WRITE_CREATE, WRITE_MODIFY, WRITE_REMOTE } from "./index.js";
 import {
   listFioriAppsOutput,
@@ -193,7 +194,20 @@ export function registerFioriTools(server: McpServer, config: AppConfig, name: (
         // the same destination + servicePath that fetched the metadata can name the service, so
         // the manifest does not end up with a guessed URL the operator has to correct by hand
         const serviceUrl = args.serviceUrl ?? resolveODataUrl(config, { destination: args.destination, systemName: args.systemName, servicePath: args.servicePath }) ?? undefined;
+        // a V2 service keeps its UI annotations in a document of its own; fetch it while the
+        // destination that can reach the catalog is still in hand
+        let annotationDocuments: Awaited<ReturnType<typeof fetchAnnotationDocuments>> = [];
+        if (args.servicePath && (args.destination || args.systemName) && args.odataVersion !== "4.0") {
+          try {
+            const target = await resolveODataTarget(config, { destination: args.destination, systemName: args.systemName, servicePath: args.servicePath }, config.requestTimeoutMs);
+            const base = new URL(target.url).origin;
+            annotationDocuments = await fetchAnnotationDocuments(base, args.servicePath, target.headers ?? {}, config.requestTimeoutMs);
+          } catch {
+            /* annotations are an improvement, never a precondition */
+          }
+        }
         const result = await generateFioriApp({
+          annotationDocuments,
           targetPath: args.workspacePath ?? config.workspaceRoot,
           appName: args.appName,
           title: args.title,

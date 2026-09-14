@@ -23,6 +23,8 @@ export interface FeAppOptions {
   navEntity?: { entitySet: string; entity: string; navigationProperty: string }; // to-many for object page facet (optional second OP)
   odataVersion: "2.0" | "4.0";
   serviceUri: string;
+  /** Annotation documents to declare alongside the service (V2 keeps its UI annotations apart). */
+  annotations?: { name: string; uri: string; localUri: string }[];
   addFcl: boolean;
   floorplan: Floorplan;
   initialLoad?: boolean;
@@ -61,15 +63,38 @@ function feSapApp(o: FeAppOptions): string {
         "type": "OData",
         "settings": {
           "odataVersion": "${o.odataVersion}",
-          "localUri": "localService/metadata.xml"
+          "localUri": "localService/metadata.xml"${annotationRef(o)}
         }
-      }
+      }${annotationSources(o)}
     },
     "sourceTemplate": {
       "id": "${sourceTemplateId(o)}",
       "version": "1.0.0"
     }
   }`;
+}
+
+/** The mainService side of an annotation reference: which data sources carry its annotations. */
+function annotationRef(o: FeAppOptions): string {
+  const names = (o.annotations ?? []).map((a) => a.name);
+  return names.length ? `,
+          "annotations": [${names.map((n) => `"${n}"`).join(", ")}]` : "";
+}
+
+/** The annotation data sources themselves, each with the copy saved under localService/. */
+function annotationSources(o: FeAppOptions): string {
+  return (o.annotations ?? [])
+    .map(
+      (a) => `,
+      "${a.name}": {
+        "uri": "${a.uri}",
+        "type": "ODataAnnotation",
+        "settings": {
+          "localUri": "${a.localUri}"
+        }
+      }`
+    )
+    .join("");
 }
 
 function feSapUi(o: FeAppOptions): string {

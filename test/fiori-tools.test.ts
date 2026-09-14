@@ -203,6 +203,68 @@ describe("choosing the entity set to build on", () => {
   });
 });
 
+describe("a V2 service whose annotations live apart", () => {
+  const METADATA_V2 = `<?xml version="1.0"?><edmx:Edmx Version="1.0" xmlns:edmx="http://schemas.microsoft.com/ado/2007/06/edmx">
+  <edmx:DataServices xmlns:m="http://schemas.microsoft.com/ado/2007/08/dataservices/metadata" m:DataServiceVersion="2.0">
+    <Schema Namespace="svc" xmlns="http://schemas.microsoft.com/ado/2008/09/edm">
+      <EntityType Name="AgencyType"><Key><PropertyRef Name="ID"/></Key><Property Name="ID" Type="Edm.String"/></EntityType>
+      <EntityType Name="TravelType"><Key><PropertyRef Name="ID"/></Key><Property Name="ID" Type="Edm.String"/></EntityType>
+      <EntityContainer Name="Container" m:IsDefaultEntityContainer="true">
+        <EntitySet Name="Agency" EntityType="svc.AgencyType"/>
+        <EntitySet Name="Travel" EntityType="svc.TravelType"/>
+      </EntityContainer>
+    </Schema>
+  </edmx:DataServices>
+</edmx:Edmx>`;
+  const ANNOTATIONS = `<?xml version="1.0"?><edmx:Edmx xmlns:edmx="http://docs.oasis-open.org/odata/ns/edmx"><edmx:DataServices>
+  <Schema xmlns="http://docs.oasis-open.org/odata/ns/edm" Namespace="van.v1">
+    <Annotations Target="svc.TravelType"><Annotation Term="UI.LineItem"/></Annotations>
+  </Schema></edmx:DataServices></edmx:Edmx>`;
+
+  it("declares the document, saves a copy, and lets it decide the entity set", async () => {
+    const ws = path.join(tmp, "gen-ann", "ws");
+    fs.mkdirSync(ws, { recursive: true });
+    const result = await generateFioriApp({
+      targetPath: ws,
+      appName: "travelv2",
+      title: "Travel",
+      metadataXml: METADATA_V2,
+      annotationDocuments: [{ technicalName: "ZTRAVEL_VAN", url: "/sap/opu/odata/IWFND/CATALOGSERVICE;v=2/Annotations('ZTRAVEL_VAN')/$value", xml: ANNOTATIONS }],
+      serviceUrl: "/sap/opu/odata/sap/ZTRAVEL/",
+      floorplan: "list-report",
+      isCap: false
+    });
+    const manifest = JSON.parse(fs.readFileSync(path.join(result.appPath, "webapp", "manifest.json"), "utf8"));
+    const sources = manifest["sap.app"]["dataSources"];
+    expect(sources["ZTRAVEL_VAN"]["type"]).toBe("ODataAnnotation");
+    expect(sources["mainService"]["settings"]["annotations"]).toEqual(["ZTRAVEL_VAN"]);
+    // the app must work offline too, so the document travels with it
+    expect(fs.existsSync(path.join(result.appPath, "webapp", "localService", "ZTRAVEL_VAN.xml"))).toBe(true);
+    // Agency comes first in the document; only the annotation says Travel is the listable one
+    expect(Object.keys(manifest["sap.ui5"]["routing"]["targets"])).toContain("TravelList");
+    const check = await validateManifest(result.appPath);
+    expect(check.issues).toEqual([]);
+  });
+
+  it("generates exactly as before when no document is supplied", async () => {
+    const ws = path.join(tmp, "gen-noann", "ws");
+    fs.mkdirSync(ws, { recursive: true });
+    const result = await generateFioriApp({
+      targetPath: ws,
+      appName: "travelplain",
+      title: "Travel",
+      metadataXml: METADATA_V2,
+      serviceUrl: "/sap/opu/odata/sap/ZTRAVEL/",
+      floorplan: "list-report",
+      isCap: false
+    });
+    const manifest = JSON.parse(fs.readFileSync(path.join(result.appPath, "webapp", "manifest.json"), "utf8"));
+    expect(Object.keys(manifest["sap.app"]["dataSources"])).toEqual(["mainService"]);
+    expect(manifest["sap.app"]["dataSources"]["mainService"]["settings"]["annotations"]).toBeUndefined();
+    expect(Object.keys(manifest["sap.ui5"]["routing"]["targets"])).toContain("AgencyList");
+  });
+});
+
 describe("generateFioriApp", () => {
   it("generates a standalone FE v4 app from metadata", async () => {
     const ws = path.join(tmp, "gen", "ws");

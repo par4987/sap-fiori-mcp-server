@@ -114,6 +114,11 @@ export async function generateFioriApp(params: {
   entitySet?: string;
   metadataXmlPath?: string;
   metadataXml?: string;
+  /**
+   * Annotation documents belonging to the service. A V2 service keeps its UI annotations outside
+   * $metadata, and without them a generated list report has nothing to put in its columns.
+   */
+  annotationDocuments?: { technicalName: string; url: string; xml: string }[];
   serviceUrl?: string;
   odataVersion?: "2.0" | "4.0";
   floorplan?: Floorplan;
@@ -134,9 +139,15 @@ export async function generateFioriApp(params: {
   }
   let entitySet = params.entitySet;
   let mainEntity = entitySet ?? "";
+  const annotationDocs = (params.annotationDocuments ?? []).filter((a) => a.xml.trim());
   if (metadataXml) {
     const model = parseEdmx(metadataXml);
-    if (!entitySet) entitySet = pickMainEntitySet(model) ?? model.entitySets[0]?.name;
+    // the sets live in $metadata, the terms that mark them listable may not: merge before choosing
+    const annotated: EdmxModel = {
+      ...model,
+      annotations: [...model.annotations, ...annotationDocs.flatMap((a) => parseEdmx(a.xml).annotations)]
+    };
+    if (!entitySet) entitySet = pickMainEntitySet(annotated) ?? model.entitySets[0]?.name;
     if (!entitySet) {
       warnings.push("Metadata contains no entity sets; generated app uses a placeholder entitySet 'Main'. Update manifest.json afterwards.");
       entitySet = "Main";
@@ -174,6 +185,11 @@ export async function generateFioriApp(params: {
 
   const { appId } = normalizeAppId(params.namespace ?? (params.isCap ? "cap.app" : "ns"), appFolderName);
 
+  const annotationFiles = annotationDocs.map((a) => {
+    const safe = a.technicalName.replace(/[^A-Za-z0-9._-]/g, "_") || "annotations";
+    return { name: safe, uri: a.url, localUri: `localService/${safe}.xml`, xml: a.xml };
+  });
+
   const options: FeAppOptions = {
     namespace: appId.split(".").slice(0, -1).join("."),
     appId,
@@ -186,7 +202,8 @@ export async function generateFioriApp(params: {
     serviceUri,
     addFcl: floorplanSupportsFcl(floorplan) ? !!params.addFcl : false,
     floorplan,
-    initialLoad: params.initialLoad
+    initialLoad: params.initialLoad,
+    annotations: annotationFiles.map(({ name, uri, localUri }) => ({ name, uri, localUri }))
   };
 
   const files: Record<string, string> = {
@@ -197,6 +214,9 @@ export async function generateFioriApp(params: {
     "ui5.yaml": feUi5Yaml(options, params.isCap),
     "package.json": fePackageJson(options, params.isCap)
   };
+  for (const a of annotationFiles) {
+    files[`webapp/${a.localUri}`] = a.xml;
+  }
   if (metadataXml) {
     files["webapp/localService/metadata.xml"] = metadataXml;
   } else {
