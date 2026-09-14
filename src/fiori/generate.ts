@@ -1,7 +1,7 @@
 import path from "node:path";
 import { resolvePath, writeFileSafe, exists } from "../util/fs.js";
 import { feComponentJs, feI18n, feIndexHtml, feManifest, feMetadataPlaceholder, fePackageJson, feUi5Yaml, type FeAppOptions, type Floorplan } from "./templates.js";
-import { parseEdmx, findEntityType } from "../odata/edmx.js";
+import { parseEdmx, findEntityType, type EdmxModel } from "../odata/edmx.js";
 import { readText } from "../util/fs.js";
 import { logger } from "../logger.js";
 
@@ -22,6 +22,57 @@ export function normalizeAppId(input: string, appName: string): { namespace: str
   // a segment starting with a digit is legal deeper in the id, but reads as a mistake
   if (/^\d/.test(name)) name = `app${name}`;
   return { namespace: ns, appId: `${ns}.${name}` };
+}
+
+/**
+ * A UI.LineItem term, however the document spells it.
+ *
+ * The same annotation arrives as `UI.LineItem`, as an alias the service picked for itself
+ * (`SAP__UI.LineItem`), or fully qualified (`com.sap.vocabularies.UI.v1.LineItem`). Matching only
+ * the bare form finds nothing in a real ABAP service, which is exactly where this has to work.
+ */
+const isLineItem = (term: string): boolean => /(?:^|\.)[A-Za-z0-9_]*UI(?:\.v\d+)?\.LineItem$/.test(term);
+
+/**
+ * Which entity set the app should be built on when the caller did not name one.
+ *
+ * "The first set in the document" is arbitrary: a V4 service lists Booking before Travel, and the
+ * generated app then opened on the item rather than the thing that owns it. The metadata already
+ * says which sets are meant to be shown — a list needs UI.LineItem, and a set without it was never
+ * going to render a table — so those are the candidates.
+ *
+ * Several may qualify, as in a travel service where both the trip and its bookings are listable.
+ * A draft-enabled service names its root outright (Common.DraftRoot against the container entry,
+ * DraftNode against the children), so that decides it. Failing that, the root of the composition is
+ * the candidate no other candidate navigates to — which settles the common parent/child pair but
+ * not a service whose child points back at its parent, and there the document order stands.
+ */
+export function pickMainEntitySet(model: EdmxModel): string | undefined {
+  const short = (qualified: string): string => qualified.split("/")[0].split(".").pop() ?? qualified;
+  const listable = new Set(
+    model.annotations.filter((a) => a.terms.some((t) => isLineItem(t.term))).map((a) => short(a.target))
+  );
+  const candidates = model.entitySets.filter((set) => listable.has(short(set.entityType)));
+  if (!candidates.length) return undefined;
+
+  // the container entry is targeted as '<alias>.Container/<set>', so the set name is the last segment
+  const draftRoots = new Set(
+    model.annotations
+      .filter((a) => a.terms.some((t) => /(?:^|\.)[A-Za-z0-9_]*[Cc]ommon\.DraftRoot$/.test(t.term)))
+      .map((a) => a.target.split("/").pop() ?? "")
+  );
+  const declaredRoot = candidates.find((c) => draftRoots.has(c.name));
+  if (declaredRoot) return declaredRoot.name;
+
+  const names = new Set(candidates.map((c) => c.name));
+  const reachable = new Set<string>();
+  for (const c of candidates) {
+    for (const target of Object.values(c.navigations)) {
+      if (target !== c.name && names.has(target)) reachable.add(target);
+    }
+  }
+  const roots = candidates.filter((c) => !reachable.has(c.name));
+  return (roots[0] ?? candidates[0]).name;
 }
 
 export interface GenerateResult {
@@ -85,7 +136,7 @@ export async function generateFioriApp(params: {
   let mainEntity = entitySet ?? "";
   if (metadataXml) {
     const model = parseEdmx(metadataXml);
-    if (!entitySet) entitySet = model.entitySets[0]?.name;
+    if (!entitySet) entitySet = pickMainEntitySet(model) ?? model.entitySets[0]?.name;
     if (!entitySet) {
       warnings.push("Metadata contains no entity sets; generated app uses a placeholder entitySet 'Main'. Update manifest.json afterwards.");
       entitySet = "Main";

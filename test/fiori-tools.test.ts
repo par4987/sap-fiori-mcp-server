@@ -7,7 +7,8 @@ import path from "node:path";
 import { listFioriApps, summarizeApp, readAppManifest, isCapProject } from "../src/fiori/apps.js";
 import { validateManifest } from "../src/ui5/validate.js";
 import { runUi5Linter } from "../src/ui5/linter.js";
-import { generateFioriApp } from "../src/fiori/generate.js";
+import { generateFioriApp, pickMainEntitySet } from "../src/fiori/generate.js";
+import { parseEdmx } from "../src/odata/edmx.js";
 import { createUi5App, createIntegrationCard } from "../src/ui5/scaffold.js";
 import {
   listFunctionalities,
@@ -137,6 +138,68 @@ describe("runUi5Linter", () => {
     expect(issues.some((i) => i.rule === "api.deprecated.coreById")).toBe(true);
     expect(issues.some((i) => i.rule === "api.deprecated.jQuerySapLog")).toBe(true);
     expect(issues.some((i) => i.rule === "i18n.key.missing")).toBe(true);
+  });
+});
+
+const TRAVEL_V4 = `<?xml version="1.0" encoding="utf-8"?>
+<edmx:Edmx Version="4.0" xmlns:edmx="http://docs.oasis-open.org/odata/ns/edmx">
+  <edmx:DataServices>
+    <Schema Namespace="srv" Alias="SAP__self" xmlns="http://docs.oasis-open.org/odata/ns/edm">
+      <EntityType Name="BookingType"><Key><PropertyRef Name="BookingUuid"/></Key>
+        <Property Name="BookingUuid" Type="Edm.Guid"/>
+        <NavigationProperty Name="_Travel" Type="srv.TravelType"/>
+      </EntityType>
+      <EntityType Name="TravelType"><Key><PropertyRef Name="TravelUuid"/></Key>
+        <Property Name="TravelUuid" Type="Edm.Guid"/>
+        <NavigationProperty Name="_Booking" Type="Collection(srv.BookingType)"/>
+      </EntityType>
+      <EntityContainer Name="Container">
+        <EntitySet Name="Booking" EntityType="srv.BookingType">
+          <NavigationPropertyBinding Path="_Travel" Target="Travel"/>
+        </EntitySet>
+        <EntitySet Name="Travel" EntityType="srv.TravelType">
+          <NavigationPropertyBinding Path="_Booking" Target="Booking"/>
+        </EntitySet>
+      </EntityContainer>
+      <Annotations Target="SAP__self.BookingType"><Annotation Term="SAP__UI.LineItem"/></Annotations>
+      <Annotations Target="SAP__self.TravelType"><Annotation Term="SAP__UI.LineItem"/></Annotations>
+      <Annotations Target="SAP__self.Container/Booking"><Annotation Term="SAP__common.DraftNode"/></Annotations>
+      <Annotations Target="SAP__self.Container/Travel"><Annotation Term="SAP__common.DraftRoot"/></Annotations>
+    </Schema>
+  </edmx:DataServices>
+</edmx:Edmx>`;
+
+describe("choosing the entity set to build on", () => {
+  it("prefers the draft root over an earlier listable child", () => {
+    // the document lists Booking first, and both carry UI.LineItem under a service alias
+    expect(pickMainEntitySet(parseEdmx(TRAVEL_V4))).toBe("Travel");
+  });
+
+  it("prefers a listable set over the first one in the document", () => {
+    const xml = TRAVEL_V4.replace(/<Annotations Target="SAP__self.BookingType">[^]*?<\/Annotations>/, "")
+      .replace(/<Annotations Target="SAP__self.Container\/Travel">[^]*?<\/Annotations>/, "");
+    expect(pickMainEntitySet(parseEdmx(xml))).toBe("Travel");
+  });
+
+  it("says nothing when no set is annotated, leaving the caller its own default", () => {
+    const xml = TRAVEL_V4.replace(/<Annotations[^]*?<\/Annotations>/g, "");
+    expect(pickMainEntitySet(parseEdmx(xml))).toBeUndefined();
+  });
+
+  it("builds the app on the draft root when no entitySet is given", async () => {
+    const ws = path.join(tmp, "gen-pick", "ws");
+    fs.mkdirSync(ws, { recursive: true });
+    const result = await generateFioriApp({
+      targetPath: ws,
+      appName: "travelpick",
+      title: "Travel",
+      metadataXml: TRAVEL_V4,
+      serviceUrl: "/odata/v4/travel/",
+      floorplan: "list-report",
+      isCap: false
+    });
+    const manifest = JSON.parse(fs.readFileSync(path.join(result.appPath, "webapp", "manifest.json"), "utf8"));
+    expect(Object.keys(manifest["sap.ui5"]["routing"]["targets"])).toContain("TravelList");
   });
 });
 
