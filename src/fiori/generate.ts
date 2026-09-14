@@ -5,13 +5,23 @@ import { parseEdmx, findEntityType } from "../odata/edmx.js";
 import { readText } from "../util/fs.js";
 import { logger } from "../logger.js";
 
-/** Normalize namespace/app id: reverse domain, dots allowed, no dashes. */
+/**
+ * Normalize namespace/app id: reverse domain, dots allowed, no dashes.
+ *
+ * Both halves need sanitising, not just the namespace. A folder may be called `travel-lr`, but a
+ * UI5 component id may not: the hyphen makes `sap.app/id` illegal, and the app this generator
+ * writes would then be rejected by the manifest validation it ships with. Underscores go too —
+ * legal, but they draw a warning, and a generated app should come out clean.
+ */
 export function normalizeAppId(input: string, appName: string): { namespace: string; appId: string } {
   let ns = (input || "ns").trim().toLowerCase().replace(/[^a-z0-9.]/g, "");
   if (!ns) ns = "ns";
   if (/^\d/.test(ns)) ns = `ns.${ns}`;
-  const appId = ns.includes(".") ? `${ns}.${appName}` : `${ns}.${appName}`;
-  return { namespace: ns, appId };
+  let name = (appName || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (!name) name = "app";
+  // a segment starting with a digit is legal deeper in the id, but reads as a mistake
+  if (/^\d/.test(name)) name = `app${name}`;
+  return { namespace: ns, appId: `${ns}.${name}` };
 }
 
 export interface GenerateResult {

@@ -167,6 +167,27 @@ describe("generateFioriApp", () => {
       generateFioriApp({ targetPath: ws, appName: "travels", title: "x", floorplan: "list-report", isCap: false })
     ).rejects.toThrow(/already exists/);
   });
+
+  it("writes an app id the manifest validation accepts, whatever the app is called", async () => {
+    const ws = path.join(tmp, "gen-dashes", "ws");
+    fs.mkdirSync(ws, { recursive: true });
+    // a folder may carry a hyphen; a UI5 component id may not
+    const result = await generateFioriApp({
+      targetPath: ws,
+      appName: "travel-lr_v2",
+      title: "Travel",
+      entitySet: "Travel",
+      serviceUrl: "/odata/v4/travel/",
+      odataVersion: "4.0",
+      floorplan: "list-report",
+      isCap: false
+    });
+    const manifest = JSON.parse(fs.readFileSync(path.join(result.appPath, "webapp", "manifest.json"), "utf8"));
+    expect(manifest["sap.app"]["id"]).toBe("ns.travellrv2");
+    const check = await validateManifest(result.appPath);
+    expect(check.issues).toEqual([]);
+    expect(check.valid).toBe(true);
+  });
 });
 
 describe("createUi5App / createIntegrationCard", () => {
