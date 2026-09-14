@@ -25,6 +25,11 @@ export interface FeAppOptions {
   serviceUri: string;
   /** Annotation documents to declare alongside the service (V2 keeps its UI annotations apart). */
   annotations?: { name: string; uri: string; localUri: string }[];
+  /**
+   * Set when the app is built on a CDS with parameters. The rows then live behind a navigation,
+   * so the pages are addressed by context path and sap.fe asks for the parameters before loading.
+   */
+  parameters?: { entitySet: string; navigation: string; keys: string[] };
   addFcl: boolean;
   floorplan: Floorplan;
   initialLoad?: boolean;
@@ -193,6 +198,27 @@ function feDependencies(o: FeAppOptions, extraLibs: string[] = []): string {
 // Routing targets per floorplan
 // ---------------------------------------------------------------------------
 
+/**
+ * How a page names the data it shows.
+ *
+ * An ordinary page points at an entity set. A parameterised one cannot: the set holds parameter
+ * records, and the rows sit behind its navigation, so the page is addressed by the path through it
+ * — which is also what makes sap.fe ask for the parameters before it loads anything.
+ */
+function pageContext(o: FeAppOptions): string {
+  return o.parameters
+    ? `"contextPath": "/${o.parameters.entitySet}/${o.parameters.navigation}"`
+    : `"entitySet": "${o.entitySet}"`;
+}
+
+/** The object page's route: through the parameters when there are any, by key when there are not. */
+function objectPagePattern(o: FeAppOptions): string {
+  const key = `${o.mainEntity.charAt(0).toLowerCase()}${o.mainEntity.slice(1)}Key`;
+  if (!o.parameters) return `${o.mainEntity}({${key}}):?query:`;
+  const params = o.parameters.keys.map((k) => `${k}={${k}}`).join(",");
+  return `${o.parameters.entitySet}(${params})/${o.parameters.navigation}({${key}}):?query:`;
+}
+
 function lrRoutingTargets(o: FeAppOptions): string {
   const navSettings = o.navEntity
     ? `,\n            "navigation": {\n              "${o.mainEntity}": {\n                "detail": { "route": "${o.mainEntity}ObjectPage" }\n              }\n            }`
@@ -216,7 +242,7 @@ function lrRoutingTargets(o: FeAppOptions): string {
         "target": "${o.mainEntity}List"
       },
       {
-        "pattern": "${o.mainEntity}({${o.mainEntity.charAt(0).toLowerCase() + o.mainEntity.slice(1)}Key}):?query:",
+        "pattern": "${objectPagePattern(o)}",
         "name": "${o.mainEntity}ObjectPage",
         "target": "${o.mainEntity}ObjectPage"
       }${secondRoute}
@@ -228,10 +254,9 @@ function lrRoutingTargets(o: FeAppOptions): string {
         "name": "${o.odataVersion === "4.0" ? "sap.fe.templates.ListReport" : v2Template}",
         "options": {
           "settings": {
-            "entitySet": "${o.entitySet}",
+            ${pageContext(o)},
             "variantManagement": "Page",
-            "initialLoad": ${o.floorplan === "worklist" ? (o.initialLoad ?? true) : (o.initialLoad ?? false)},
-            "contextPath": ""${navSettings},
+            "initialLoad": ${o.floorplan === "worklist" ? (o.initialLoad ?? true) : (o.initialLoad ?? false)}${navSettings},
             "controlConfiguration": {
               "@com.sap.vocabularies.UI.v1.LineItem": {
                 "tableSettings": {
@@ -249,7 +274,7 @@ function lrRoutingTargets(o: FeAppOptions): string {
         "name": "sap.fe.templates.ObjectPage",
         "options": {
           "settings": {
-            "entitySet": "${o.entitySet}"${opNav}
+            ${pageContext(o)}${opNav}
           }
         }
       }${secondTarget}

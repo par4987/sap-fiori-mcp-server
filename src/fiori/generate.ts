@@ -58,6 +58,40 @@ const hasObjectPage = (terms: string[]): boolean =>
  * the candidate no other candidate navigates to — which settles the common parent/child pair but
  * not a service whose child points back at its parent, and there the document order stands.
  */
+/**
+ * A CDS with parameters, as OData exposes it.
+ *
+ * The entity set holds the parameters, not the rows: its type is `<Name>Parameters`, and a single
+ * navigation — `Set` by convention — leads to the result the annotations describe. An app therefore
+ * opens on `Entity(p1=…,p2=…)/Set`, and a generator that stops at the entity set builds a list of
+ * parameter records nobody can use.
+ */
+export interface ParameterizedEntity {
+  /** The parameter entity set, e.g. InterfaceStatistics. */
+  entitySet: string;
+  /** The navigation that leads to the rows, e.g. Set. */
+  navigation: string;
+  /** The parameters the service will demand, in declaration order. */
+  parameters: string[];
+  /** Short name of the result entity type, which is what the annotations target. */
+  resultType: string;
+}
+
+const shortName = (qualified: string): string =>
+  (qualified.replace(/^Collection\(/, "").replace(/\)$/, "").split("/")[0].split(".").pop() ?? qualified);
+
+/** The parameterised shape of an entity set, or null when it is an ordinary one. */
+export function parameterizedEntity(model: EdmxModel, entitySetName: string): ParameterizedEntity | null {
+  const set = model.entitySets.find((s) => s.name === entitySetName);
+  if (!set) return null;
+  const type = model.entityTypes.find((t) => t.name === shortName(set.entityType));
+  if (!type || !/Parameters$/.test(type.name)) return null;
+  // 'Set' is the name ABAP gives it; fall back to the only navigation when a service differs
+  const nav = type.navigationProperties.find((n) => n.name === "Set") ?? (type.navigationProperties.length === 1 ? type.navigationProperties[0] : undefined);
+  if (!nav?.type) return null;
+  return { entitySet: set.name, navigation: nav.name, parameters: type.properties.map((p) => p.name), resultType: shortName(nav.type) };
+}
+
 export function pickMainEntitySet(model: EdmxModel): string | undefined {
   const short = (qualified: string): string => qualified.split("/")[0].split(".").pop() ?? qualified;
   const listable = new Set(
@@ -69,10 +103,16 @@ export function pickMainEntitySet(model: EdmxModel): string | undefined {
     termsByType.set(key, [...(termsByType.get(key) ?? []), ...a.terms.map((t) => t.term)]);
   }
 
-  const listables = model.entitySets.filter((set) => listable.has(short(set.entityType)));
+  const listables = model.entitySets.filter((set) => {
+    if (listable.has(short(set.entityType))) return true;
+    // a parameterised set is annotated on the far side of its navigation
+    const p = parameterizedEntity(model, set.name);
+    return !!p && listable.has(p.resultType);
+  });
   if (!listables.length) return undefined;
   // value helps are listable but are not what an app opens on; keep them only if nothing else is left
-  const withPage = listables.filter((set) => hasObjectPage(termsByType.get(short(set.entityType)) ?? []));
+  const typeOf = (set: (typeof listables)[number]): string => parameterizedEntity(model, set.name)?.resultType ?? short(set.entityType);
+  const withPage = listables.filter((set) => hasObjectPage(termsByType.get(typeOf(set)) ?? []));
   const candidates = withPage.length ? withPage : listables;
 
   // the container entry is targeted as '<alias>.Container/<set>', so the set name is the last segment
@@ -85,7 +125,7 @@ export function pickMainEntitySet(model: EdmxModel): string | undefined {
   if (declaredRoot) return declaredRoot.name;
 
   // a filter bar belongs to the page an app opens on, and a child list never gets one
-  const filtered = candidates.find((c) => (termsByType.get(short(c.entityType)) ?? []).some((t) => uiTerm("SelectionFields").test(t)));
+  const filtered = candidates.find((c) => (termsByType.get(typeOf(c)) ?? []).some((t) => uiTerm("SelectionFields").test(t)));
   if (filtered) return filtered.name;
 
   const names = new Set(candidates.map((c) => c.name));
@@ -163,6 +203,7 @@ export async function generateFioriApp(params: {
   }
   let entitySet = params.entitySet;
   let mainEntity = entitySet ?? "";
+  let parameters: ParameterizedEntity | undefined;
   const annotationDocs = (params.annotationDocuments ?? []).filter((a) => a.xml.trim());
   if (metadataXml) {
     const model = parseEdmx(metadataXml);
@@ -176,7 +217,17 @@ export async function generateFioriApp(params: {
       warnings.push("Metadata contains no entity sets; generated app uses a placeholder entitySet 'Main'. Update manifest.json afterwards.");
       entitySet = "Main";
     }
-    mainEntity = model.entityTypes.find((t) => t.name === entitySet)?.name ?? findEntityType(model, entitySet)?.name ?? entitySet;
+    // a parameterised set is named for its parameters; the pages are about the result type
+    parameters = parameterizedEntity(model, entitySet) ?? undefined;
+    mainEntity = parameters
+      ? parameters.resultType.replace(/Type$/, "")
+      : (model.entityTypes.find((t) => t.name === entitySet)?.name ?? findEntityType(model, entitySet)?.name ?? entitySet);
+    if (parameters) {
+      warnings.push(
+        `'${entitySet}' is a CDS with parameters (${parameters.parameters.join(", ")}); the app is built on ` +
+          `${entitySet}/${parameters.navigation} and sap.fe will ask for them before loading data.`
+      );
+    }
   } else if (!entitySet) {
     warnings.push("No metadata and no entitySet provided; using placeholder entitySet 'Main'. Run download_odata_service_metadata and update the manifest.");
     entitySet = "Main";
@@ -227,7 +278,8 @@ export async function generateFioriApp(params: {
     addFcl: floorplanSupportsFcl(floorplan) ? !!params.addFcl : false,
     floorplan,
     initialLoad: params.initialLoad,
-    annotations: annotationFiles.map(({ name, uri, localUri }) => ({ name, uri, localUri }))
+    annotations: annotationFiles.map(({ name, uri, localUri }) => ({ name, uri, localUri })),
+    parameters: parameters ? { entitySet: parameters.entitySet, navigation: parameters.navigation, keys: parameters.parameters } : undefined
   };
 
   const files: Record<string, string> = {

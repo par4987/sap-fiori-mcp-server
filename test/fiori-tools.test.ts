@@ -7,7 +7,7 @@ import path from "node:path";
 import { listFioriApps, summarizeApp, readAppManifest, isCapProject } from "../src/fiori/apps.js";
 import { validateManifest } from "../src/ui5/validate.js";
 import { runUi5Linter } from "../src/ui5/linter.js";
-import { generateFioriApp, pickMainEntitySet } from "../src/fiori/generate.js";
+import { generateFioriApp, pickMainEntitySet, parameterizedEntity } from "../src/fiori/generate.js";
 import { parseEdmx } from "../src/odata/edmx.js";
 import { createUi5App, createIntegrationCard } from "../src/ui5/scaffold.js";
 import {
@@ -291,6 +291,88 @@ describe("a V2 service whose annotations live apart", () => {
     expect(Object.keys(manifest["sap.app"]["dataSources"])).toEqual(["mainService"]);
     expect(manifest["sap.app"]["dataSources"]["mainService"]["settings"]["annotations"]).toBeUndefined();
     expect(Object.keys(manifest["sap.ui5"]["routing"]["targets"])).toContain("AgencyList");
+  });
+});
+
+const PARAMETERIZED = `<?xml version="1.0" encoding="utf-8"?>
+<edmx:Edmx Version="4.0" xmlns:edmx="http://docs.oasis-open.org/odata/ns/edmx">
+  <edmx:DataServices>
+    <Schema Namespace="srv" Alias="SAP__self" xmlns="http://docs.oasis-open.org/odata/ns/edm">
+      <EntityType Name="OtherType"><Key><PropertyRef Name="Id"/></Key><Property Name="Id" Type="Edm.String"/></EntityType>
+      <EntityType Name="StatsParameters">
+        <Key><PropertyRef Name="p_from"/><PropertyRef Name="p_to"/></Key>
+        <Property Name="p_from" Type="Edm.Date"/>
+        <Property Name="p_to" Type="Edm.Date"/>
+        <NavigationProperty Name="Set" Type="Collection(srv.StatsType)"/>
+      </EntityType>
+      <EntityType Name="StatsType"><Key><PropertyRef Name="Id"/></Key><Property Name="Id" Type="Edm.String"/></EntityType>
+      <EntityContainer Name="Container">
+        <EntitySet Name="Other" EntityType="srv.OtherType"/>
+        <EntitySet Name="Stats" EntityType="srv.StatsParameters"/>
+      </EntityContainer>
+      <Annotations Target="SAP__self.StatsType">
+        <Annotation Term="SAP__UI.LineItem"/><Annotation Term="SAP__UI.HeaderInfo"/>
+      </Annotations>
+    </Schema>
+  </edmx:DataServices>
+</edmx:Edmx>`;
+
+describe("a CDS with parameters", () => {
+  it("reads the parameters and the navigation that leads to the rows", () => {
+    const p = parameterizedEntity(parseEdmx(PARAMETERIZED), "Stats");
+    expect(p).toEqual({ entitySet: "Stats", navigation: "Set", parameters: ["p_from", "p_to"], resultType: "StatsType" });
+    // an ordinary set is not mistaken for one
+    expect(parameterizedEntity(parseEdmx(PARAMETERIZED), "Other")).toBeNull();
+  });
+
+  it("finds the annotated set even though the terms sit on the far side of the navigation", () => {
+    expect(pickMainEntitySet(parseEdmx(PARAMETERIZED))).toBe("Stats");
+  });
+
+  it("addresses the pages through the parameters instead of the parameter records", async () => {
+    const ws = path.join(tmp, "gen-param", "ws");
+    fs.mkdirSync(ws, { recursive: true });
+    const result = await generateFioriApp({
+      targetPath: ws,
+      appName: "stats",
+      title: "Stats",
+      metadataXml: PARAMETERIZED,
+      serviceUrl: "/odata/v4/stats/",
+      floorplan: "list-report",
+      isCap: false
+    });
+    const manifest = JSON.parse(fs.readFileSync(path.join(result.appPath, "webapp", "manifest.json"), "utf8"));
+    const targets = manifest["sap.ui5"]["routing"]["targets"];
+    // a list of parameter records is not an app; the rows live behind the navigation
+    expect(targets["StatsList"]["options"]["settings"]["contextPath"]).toBe("/Stats/Set");
+    expect(targets["StatsList"]["options"]["settings"]["entitySet"]).toBeUndefined();
+    expect(targets["StatsObjectPage"]["options"]["settings"]["contextPath"]).toBe("/Stats/Set");
+    const routes = manifest["sap.ui5"]["routing"]["routes"];
+    expect(routes[1]["pattern"]).toBe("Stats(p_from={p_from},p_to={p_to})/Set({statsKey}):?query:");
+    // the caller must know parameters will be demanded before any data appears
+    expect(result.warnings.join(" ")).toMatch(/p_from, p_to/);
+    const check = await validateManifest(result.appPath);
+    expect(check.issues).toEqual([]);
+  });
+
+  it("leaves an ordinary app addressed by entity set", async () => {
+    const ws = path.join(tmp, "gen-param-plain", "ws");
+    fs.mkdirSync(ws, { recursive: true });
+    const result = await generateFioriApp({
+      targetPath: ws,
+      appName: "plain",
+      title: "Plain",
+      metadataXml: PARAMETERIZED,
+      entitySet: "Other",
+      serviceUrl: "/odata/v4/stats/",
+      floorplan: "list-report",
+      isCap: false
+    });
+    const manifest = JSON.parse(fs.readFileSync(path.join(result.appPath, "webapp", "manifest.json"), "utf8"));
+    const settings = manifest["sap.ui5"]["routing"]["targets"]["OtherList"]["options"]["settings"];
+    expect(settings["entitySet"]).toBe("Other");
+    expect(settings["contextPath"]).toBeUndefined();
+    expect(manifest["sap.ui5"]["routing"]["routes"][1]["pattern"]).toBe("Other({otherKey}):?query:");
   });
 });
 
