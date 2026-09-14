@@ -7,10 +7,16 @@
  * environment variable adds a manual step for a value nobody chose. Storing it is the friendlier
  * default, provided the stored form is useless to anyone else.
  *
- * On Windows that is DPAPI through PowerShell's SecureString, which ties the blob to this Windows
- * user: another account on the same machine cannot read it, and neither can a copy of the file
- * taken elsewhere. Elsewhere there is no equivalent the platform guarantees, so the token is
- * written in the clear with owner-only permissions and the caller is told plainly.
+ * On Windows that is DPAPI, which ties the blob to this Windows user: another account on the same
+ * machine cannot read it, and neither can a copy of the file taken elsewhere. Elsewhere there is no
+ * equivalent the platform guarantees, so the token is written in the clear with owner-only
+ * permissions and the caller is told plainly.
+ *
+ * DPAPI is reached through .NET's ProtectedData rather than ConvertTo-SecureString, because the
+ * cmdlet lives in Microsoft.PowerShell.Security and that module does not always load: a shell whose
+ * PSModulePath or module cache is in a bad state answers CommandNotFoundException, sealing fails,
+ * and the token lands in the clear on a machine where DPAPI was available the whole time. The type
+ * is part of the framework, so nothing has to be found for it to work.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -46,31 +52,49 @@ function powershell(script: string, payload: string): string {
   }).trim();
 }
 
-function seal(value: string): { kind: SealKind; value: string } {
+// base64 in and out of PowerShell: the payload never touches a command line, and the result never
+// depends on what the console happens to be encoding today
+const SEAL_SCRIPT =
+  "Add-Type -AssemblyName System.Security; " +
+  "[Convert]::ToBase64String([Security.Cryptography.ProtectedData]::Protect(" +
+  "[Text.Encoding]::UTF8.GetBytes($env:MCP_TOKEN_PAYLOAD), $null, 'CurrentUser'))";
+
+const UNSEAL_SCRIPT =
+  "Add-Type -AssemblyName System.Security; " +
+  "[Convert]::ToBase64String([Security.Cryptography.ProtectedData]::Unprotect(" +
+  "[Convert]::FromBase64String($env:MCP_TOKEN_PAYLOAD), $null, 'CurrentUser'))";
+
+/** The SecureString format written by earlier versions: hex, and nothing else. */
+const LEGACY_BLOB = /^[0-9a-fA-F]+$/;
+
+const UNSEAL_LEGACY_SCRIPT =
+  "[Runtime.InteropServices.Marshal]::PtrToStringBSTR(" +
+  "[Runtime.InteropServices.Marshal]::SecureStringToBSTR((ConvertTo-SecureString -String $env:MCP_TOKEN_PAYLOAD)))";
+
+function seal(value: string): { kind: SealKind; value: string; sealError?: string } {
   if (!isWindows) return { kind: "plain", value };
   try {
-    const sealed = powershell(
-      "ConvertFrom-SecureString -SecureString (ConvertTo-SecureString -String $env:MCP_TOKEN_PAYLOAD -AsPlainText -Force)",
-      value
-    );
+    const sealed = powershell(SEAL_SCRIPT, value);
     if (sealed) return { kind: "dpapi", value: sealed };
-  } catch {
-    /* fall through to plain, and say so */
+    return { kind: "plain", value, sealError: "PowerShell returned no DPAPI blob." };
+  } catch (e) {
+    // never swallow this: a token believed to be sealed and sitting in the clear is the one
+    // outcome the operator must not have to guess at
+    return { kind: "plain", value, sealError: e instanceof Error ? e.message.split(/\r?\n/)[0] : String(e) };
   }
-  return { kind: "plain", value };
 }
 
 function unseal(stored: StoredToken): string {
   if (stored.kind === "plain") return stored.value;
-  return powershell(
-    "[Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR((ConvertTo-SecureString -String $env:MCP_TOKEN_PAYLOAD)))",
-    stored.value
-  );
+  if (LEGACY_BLOB.test(stored.value)) return powershell(UNSEAL_LEGACY_SCRIPT, stored.value);
+  return Buffer.from(powershell(UNSEAL_SCRIPT, stored.value), "base64").toString("utf8");
 }
 
 export interface SaveResult {
   file: string;
   kind: SealKind;
+  /** Why the token could not be sealed, when Windows was supposed to be able to seal it. */
+  sealError?: string;
 }
 
 export function saveRefreshToken(dataDir: string, destination: string, token: string): SaveResult {
@@ -85,7 +109,7 @@ export function saveRefreshToken(dataDir: string, destination: string, token: st
   } catch {
     /* best effort */
   }
-  return { file, kind: sealed.kind };
+  return { file, kind: sealed.kind, ...(sealed.sealError ? { sealError: sealed.sealError } : {}) };
 }
 
 /** The stored token for a destination, or null when there is none or it cannot be read. */

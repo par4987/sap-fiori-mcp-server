@@ -39,6 +39,38 @@ describe("storing a refresh token", () => {
     }
   });
 
+  it("seals without depending on a PowerShell module being loadable", () => {
+    if (process.platform !== "win32") return;
+    // Microsoft.PowerShell.Security failing to autoload is what silently downgraded sealing to
+    // plain text; a PSModulePath that offers nothing reproduces that shell
+    const previous = process.env.PSModulePath;
+    process.env.PSModulePath = path.join(os.tmpdir(), "mcp-no-such-modules");
+    try {
+      const saved = saveRefreshToken(dir, "BTP", TOKEN);
+      expect(saved.kind).toBe("dpapi");
+      expect(saved.sealError).toBeUndefined();
+      expect(fs.readFileSync(saved.file, "utf8")).not.toContain(TOKEN);
+      expect(readRefreshToken(dir, "BTP")).toBe(TOKEN);
+    } finally {
+      if (previous === undefined) delete process.env.PSModulePath;
+      else process.env.PSModulePath = previous;
+    }
+  });
+
+  it("says why a token ended up in the clear when Windows should have sealed it", () => {
+    if (process.platform !== "win32") return;
+    const previous = process.env.PATH;
+    process.env.PATH = path.join(os.tmpdir(), "mcp-no-powershell-here");
+    try {
+      const saved = saveRefreshToken(dir, "BTP", TOKEN);
+      expect(saved.kind).toBe("plain");
+      // the operator must not have to guess that sealing was attempted and failed
+      expect(saved.sealError).toBeTruthy();
+    } finally {
+      process.env.PATH = previous as string;
+    }
+  });
+
   it("keeps tokens of different destinations apart", () => {
     saveRefreshToken(dir, "BTP", "token-one");
     saveRefreshToken(dir, "OTHER", "token-two");

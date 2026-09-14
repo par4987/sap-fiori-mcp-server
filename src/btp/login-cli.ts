@@ -84,6 +84,9 @@ export async function runBtpLogin(opts: BtpLoginOptions): Promise<void> {
       ? "  sealed with DPAPI — only this Windows user on this machine can read it"
       : "  stored in the clear with owner-only permissions; this platform offers no sealing this tool can rely on"
   );
+  // on Windows, plain means sealing was attempted and failed — say what went wrong rather than
+  // letting it read like a platform that never had DPAPI
+  if (saved.sealError) out(`  DPAPI was expected to seal it and did not: ${saved.sealError}`);
   out();
   if (opts.destination) {
     out(`Set the destination's Authentication to OAuth2RefreshToken and it will use this token.`);

@@ -735,7 +735,9 @@ export async function tokenLogin(name: string): Promise<TokenStatus & { identity
     identityProvider: idp,
     valid: true,
     sealed: saved.kind,
-    detail: `Signed in and stored${idp ? ` after ${idp}` : ""}. Nothing else has to be configured.`
+    detail: saved.sealError
+      ? `Signed in and stored${idp ? ` after ${idp}` : ""}, but DPAPI did not seal it: ${saved.sealError}`
+      : `Signed in and stored${idp ? ` after ${idp}` : ""}. Nothing else has to be configured.`
   };
 }
 
