@@ -241,14 +241,18 @@ function objectPagePattern(o: FeAppOptions): string {
  */
 function feRootView(o: FeAppOptions, v2ViewName: string): string {
   const v4 = o.odataVersion === "4.0";
-  const viewName = v4 ? (o.addFcl ? "sap.fe.core.rootView.Fcl" : "sap.fe.core.rootView.NavContainer") : v2ViewName;
-  const id = v4 ? "appRootView" : `${o.mainEntity}Root`;
+  // a v2 app's AppComponent builds its own NavContainer from sap.ui.generic.app; naming a view here
+  // only gives it a second, empty one
+  if (!v4) return "";
+  const viewName = o.addFcl ? "sap.fe.core.rootView.Fcl" : "sap.fe.core.rootView.NavContainer";
+  const id = "appRootView";
+  void v2ViewName;
   return `"rootView": {
       "viewName": "${viewName}",
       "type": "XML",
       "async": true,
       "id": "${id}"
-    }`;
+    },`;
 }
 
 /**
@@ -284,6 +288,62 @@ function objectPageTarget(o: FeAppOptions, opNav: string): string {
           }
         }
       }`;
+}
+
+/**
+ * The page hierarchy a v2 Fiori elements app is built from.
+ *
+ * The v2 templates do not read routing targets: sap.ui.generic.app is where they find their pages,
+ * and without it AppComponent starts, finds nothing to show and logs "page stack is empty but
+ * should have been initialized". The v4 templates use routing instead and want none of this.
+ */
+function v2GenericApp(o: FeAppOptions): string {
+  if (o.odataVersion === "4.0") return "";
+  const listComponent =
+    o.floorplan === "analytical-list-page"
+      ? "sap.suite.ui.generic.template.AnalyticalListPage"
+      : "sap.suite.ui.generic.template.ListReport";
+  const pageKind = o.floorplan === "analytical-list-page" ? "AnalyticalListPage" : "ListReport";
+  return `,
+  "sap.ui.generic.app": {
+    "_version": "1.3.0",
+    "settings": {},
+    "pages": {
+      "${pageKind}|${o.entitySet}": {
+        "entitySet": "${o.entitySet}",
+        "component": {
+          "name": "${listComponent}",
+          "list": true,
+          "settings": {
+            "smartVariantManagement": true
+          }
+        },
+        "pages": {
+          "ObjectPage|${o.entitySet}": {
+            "entitySet": "${o.entitySet}",
+            "component": {
+              "name": "sap.suite.ui.generic.template.ObjectPage"
+            }
+          }
+        }
+      }
+    }
+  }`;
+}
+
+/**
+ * The routing section, which belongs to a v4 app only.
+ *
+ * A v2 app's AppComponent builds its own routing from sap.ui.generic.app. A hand-written one beside
+ * it leaves the container with a page stack it never fills — the app renders nothing at all.
+ */
+function routingSection(o: FeAppOptions, targets: (o: FeAppOptions) => string, overrides: { routerClass?: string } = {}): string {
+  if (o.odataVersion !== "4.0") return "";
+  // routingConfig opens the routing object; the targets close it
+  return `,
+    ${routingConfig(o, overrides)}
+    ${targets(o)}
+  }`;
 }
 
 function lrRoutingTargets(o: FeAppOptions): string {
@@ -424,11 +484,9 @@ ${feSapUi(o)},
       "suffix": "custom"
     },
     ${feModelSettings(o)},
-    ${feRootView(o, "sap.suite.ui.generic.template.ListReport.view.ListReport")},
-    ${routingConfig(o)}
-    ${lrRoutingTargets(o)}
-  }
-  }
+    ${feRootView(o, "sap.suite.ui.generic.template.ListReport.view.ListReport")}
+    "flexAware": false${routingSection(o, lrRoutingTargets)}
+  }${v2GenericApp(o)}
 }`;
 }
 
@@ -445,7 +503,7 @@ ${feSapUi(o)},
       "suffix": "custom"
     },
     ${feModelSettings(o)},
-    ${feRootView(o, "sap.suite.ui.generic.template.ObjectPage.view.Details")},
+    ${feRootView(o, "sap.suite.ui.generic.template.ObjectPage.view.Details")}
     ${routingConfig(o, { routerClass: "sap.m.routing.Router" })}
     ${opRoutingTargets(o)}
   }
@@ -466,16 +524,9 @@ ${feSapUi(o)},
       "suffix": "custom"
     },
     ${feModelSettings(o)},
-    "rootView": {
-      "viewName": "sap.suite.ui.generic.template.AnalyticalListPage.view.AnalyticalListPage",
-      "type": "XML",
-      "async": true,
-      "id": "${o.mainEntity}List"
-    },
-    ${routingConfig(o, { routerClass: "sap.m.routing.Router" })}
-    ${alpRoutingTargets(o)}
-  }
-  }
+    ${feRootView(o, "sap.suite.ui.generic.template.AnalyticalListPage.view.AnalyticalListPage")}
+    "flexAware": false${routingSection(o, alpRoutingTargets, { routerClass: "sap.m.routing.Router" })}
+  }${v2GenericApp(o)}
 }`;
 }
 
@@ -648,10 +699,20 @@ function frameworkLibraries(o: FeAppOptions): string[] {
   const templates =
     o.floorplan === "overview-page"
       ? ["sap.ovp"]
-      : o.floorplan === "analytical-list-page" || !v4
-        ? ["sap.suite.ui.generic.template"]
-        : ["sap.fe.templates"];
-  return ["sap.m", "sap.ui.core", ...(o.addFcl ? ["sap.f"] : []), ...templates, "themelib_sap_horizon"];
+      : v4
+        ? ["sap.fe.templates"]
+        : // the v2 smart templates do not run without these two, and the manifest names them
+          ["sap.suite.ui.generic.template", "sap.ui.comp", "sap.ushell"];
+  const charts = o.floorplan === "analytical-list-page" ? ["sap.chart", "sap.suite.ui.microchart"] : [];
+  return [
+    "sap.m",
+    "sap.ui.core",
+    "sap.ui.layout",
+    ...(o.addFcl ? ["sap.f"] : []),
+    ...templates,
+    ...charts,
+    "themelib_sap_horizon"
+  ];
 }
 
 /**

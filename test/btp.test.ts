@@ -312,8 +312,12 @@ describe("Floorplan templates", () => {
 
   it("analytical-list-page manifest (V2) uses the generic template ALP component", () => {
     const parsed = JSON.parse(feManifest({ ...base, odataVersion: "2.0", addFcl: false, floorplan: "analytical-list-page" }));
-    expect(parsed["sap.ui5"].routing.targets.TravelList.name).toBe("sap.suite.ui.generic.template.AnalyticalListPage");
-    expect(parsed["sap.ui5"].routing.targets.TravelObjectPage.name).toBe("sap.suite.ui.generic.template.ObjectPage");
+    // a v2 app declares its pages in sap.ui.generic.app; its AppComponent owns the routing
+    const pages = parsed["sap.ui.generic.app"].pages;
+    const list = pages["AnalyticalListPage|Travel"];
+    expect(list.component.name).toBe("sap.suite.ui.generic.template.AnalyticalListPage");
+    expect(list.pages["ObjectPage|Travel"].component.name).toBe("sap.suite.ui.generic.template.ObjectPage");
+    expect(parsed["sap.ui5"].routing).toBeUndefined();
   });
 
   it("downgrades unsupported floorplan/version combos with a warning", () => {

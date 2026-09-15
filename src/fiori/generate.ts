@@ -267,7 +267,17 @@ export async function generateFioriApp(params: {
 
   const annotationFiles = annotationDocs.map((a) => {
     const safe = a.technicalName.replace(/[^A-Za-z0-9._-]/g, "_") || "annotations";
-    return { name: safe, uri: a.url, localUri: `localService/${safe}.xml`, xml: a.xml };
+    // the manifest must name the document the way the browser will ask for it: a path, like the
+    // service itself. An absolute URL to the backend host is unreachable from a served app — the
+    // annotations never arrive and the list report renders without columns.
+    let uri = a.url;
+    try {
+      const parsed = new URL(a.url);
+      uri = `${parsed.pathname}${parsed.search}`;
+    } catch {
+      /* already relative */
+    }
+    return { name: safe, uri, localUri: `localService/${safe}.xml`, xml: a.xml };
   });
 
   const options: FeAppOptions = {

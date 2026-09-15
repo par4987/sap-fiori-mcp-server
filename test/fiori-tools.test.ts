@@ -259,7 +259,7 @@ describe("a V2 service whose annotations live apart", () => {
       appName: "travelv2",
       title: "Travel",
       metadataXml: METADATA_V2,
-      annotationDocuments: [{ technicalName: "ZTRAVEL_VAN", url: "/sap/opu/odata/IWFND/CATALOGSERVICE;v=2/Annotations('ZTRAVEL_VAN')/$value", xml: ANNOTATIONS }],
+      annotationDocuments: [{ technicalName: "ZTRAVEL_VAN", url: "https://abap.example.com/sap/opu/odata/IWFND/CATALOGSERVICE;v=2/Annotations('ZTRAVEL_VAN')/$value", xml: ANNOTATIONS }],
       serviceUrl: "/sap/opu/odata/sap/ZTRAVEL/",
       floorplan: "list-report",
       isCap: false
@@ -267,11 +267,15 @@ describe("a V2 service whose annotations live apart", () => {
     const manifest = JSON.parse(fs.readFileSync(path.join(result.appPath, "webapp", "manifest.json"), "utf8"));
     const sources = manifest["sap.app"]["dataSources"];
     expect(sources["ZTRAVEL_VAN"]["type"]).toBe("ODataAnnotation");
+    // a served app cannot reach an absolute URL to the backend host: the annotations never arrive
+    // and the list report renders without columns
+    expect(sources["ZTRAVEL_VAN"]["uri"]).toBe("/sap/opu/odata/IWFND/CATALOGSERVICE;v=2/Annotations('ZTRAVEL_VAN')/$value");
     expect(sources["mainService"]["settings"]["annotations"]).toEqual(["ZTRAVEL_VAN"]);
     // the app must work offline too, so the document travels with it
     expect(fs.existsSync(path.join(result.appPath, "webapp", "localService", "ZTRAVEL_VAN.xml"))).toBe(true);
     // Agency comes first in the document; only the annotation says Travel is the listable one
-    expect(Object.keys(manifest["sap.ui5"]["routing"]["targets"])).toContain("TravelList");
+    // (a v2 app names its pages in sap.ui.generic.app, not in routing targets)
+    expect(Object.keys(manifest["sap.ui.generic.app"]["pages"])).toEqual(["ListReport|Travel"]);
     const check = await validateManifest(result.appPath);
     expect(check.issues).toEqual([]);
   });
@@ -291,7 +295,7 @@ describe("a V2 service whose annotations live apart", () => {
     const manifest = JSON.parse(fs.readFileSync(path.join(result.appPath, "webapp", "manifest.json"), "utf8"));
     expect(Object.keys(manifest["sap.app"]["dataSources"])).toEqual(["mainService"]);
     expect(manifest["sap.app"]["dataSources"]["mainService"]["settings"]["annotations"]).toBeUndefined();
-    expect(Object.keys(manifest["sap.ui5"]["routing"]["targets"])).toContain("AgencyList");
+    expect(Object.keys(manifest["sap.ui.generic.app"]["pages"])).toEqual(["ListReport|Agency"]);
   });
 });
 
@@ -461,9 +465,29 @@ describe("what makes a generated app actually run in a browser", () => {
     const fcl = JSON.parse(feManifest(opts({ addFcl: true })))["sap.ui5"];
     expect(fcl.rootView.viewName).toBe("sap.fe.core.rootView.Fcl");
     expect(fcl.routing.config.routerClass).toBe("sap.f.routing.Router");
-    // a v2 app keeps naming its own template view, which is correct there
-    const v2 = JSON.parse(feManifest(opts({ odataVersion: "2.0" })))["sap.ui5"];
-    expect(v2.rootView.viewName).toContain("sap.suite.ui.generic.template");
+    // a v2 app names no root view at all: its AppComponent builds one from sap.ui.generic.app
+    const v2 = JSON.parse(feManifest(opts({ odataVersion: "2.0" })));
+    expect(v2["sap.ui5"].rootView).toBeUndefined();
+    expect(Object.keys(v2["sap.ui.generic.app"].pages)).toEqual(["ListReport|Travels"]);
+  });
+
+  it("gives a v2 app the page hierarchy its templates read", () => {
+    const v2 = JSON.parse(feManifest(opts({ odataVersion: "2.0" })));
+    const generic = v2["sap.ui.generic.app"];
+    // without this AppComponent starts, finds no page and logs "page stack is empty"
+    const list = generic.pages["ListReport|Travels"];
+    expect(list.entitySet).toBe("Travels");
+    expect(list.component.name).toBe("sap.suite.ui.generic.template.ListReport");
+    expect(list.pages["ObjectPage|Travels"].component.name).toBe("sap.suite.ui.generic.template.ObjectPage");
+    // the v4 templates read routing instead and want none of it
+    expect(JSON.parse(feManifest(opts()))["sap.ui.generic.app"]).toBeUndefined();
+  });
+
+  it("asks the tooling for the libraries a v2 app cannot start without", () => {
+    const yaml = feUi5Yaml(opts({ odataVersion: "2.0" }), false);
+    for (const lib of ["sap.suite.ui.generic.template", "sap.ui.comp", "sap.ushell"]) {
+      expect(yaml).toContain(`    - name: ${lib}`);
+    }
   });
 
   it("lets a row reach the object page", () => {
