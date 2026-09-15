@@ -286,10 +286,12 @@ describe("Floorplan templates", () => {
     serviceUri: "/odata/v4/travel/"
   };
 
-  it("object-page manifest uses the ObjectPage root view (V4)", () => {
+  it("object-page manifest navigates inside the sap.fe root view (V4)", () => {
     const m = feManifest({ ...base, addFcl: false, floorplan: "object-page" });
     const parsed = JSON.parse(m);
-    expect(parsed["sap.ui5"].rootView.viewName).toBe("sap.fe.templates.ObjectPage.view.ObjectPage");
+    // naming the template's own view here loads a file that ships only inside the library preload:
+    // the app dies on a 404 and renders nothing. sap.fe navigates inside its own container instead.
+    expect(parsed["sap.ui5"].rootView.viewName).toBe("sap.fe.core.rootView.NavContainer");
     const target = parsed["sap.ui5"].routing.targets.TravelObjectPage;
     expect(target.name).toBe("sap.fe.templates.ObjectPage");
     expect(parsed["sap.app"].sourceTemplate.id).toContain("object-page");

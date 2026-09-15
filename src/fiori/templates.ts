@@ -165,6 +165,15 @@ function routingConfig(o: FeAppOptions, overrides: { routerClass?: string } = {}
   const fclConfig = o.addFcl
     ? `,\n          "controlId": "layout",\n          "controlAggregation": "beginColumnPages"`
     : "";
+  // sap.fe insists the root view and the router class match, and says so plainly when they do not:
+  // NavContainer goes with sap.m.routing.Router, Fcl with sap.f.routing.Router. Nothing else
+  // belongs in a v4 config — viewType and viewPath describe views the app does not own.
+  if (o.odataVersion === "4.0") {
+    return `"routing": {
+      "config": {
+        "routerClass": "${o.addFcl ? "sap.f.routing.Router" : "sap.m.routing.Router"}"
+      }${fclLayouts},`;
+  }
   return `"routing": {
       "config": {
         "routerClass": "${overrides.routerClass ?? (o.addFcl ? "sap.f.routing.Router" : "sap.m.routing.Router")}",
@@ -185,7 +194,7 @@ function feDependencies(o: FeAppOptions, extraLibs: string[] = []): string {
   const chartLibs = o.floorplan === "analytical-list-page" ? '\n        "sap.chart": {},\n        "sap.suite.ui.microchart": {},' : "";
   const fLib = o.addFcl ? '\n        "sap.f": {},' : "";
   return `"dependencies": {
-      "minUI5Version": "${v4 ? "1.130.0" : "1.96.0"}",
+      "minUI5Version": "${ui5Version(o)}",
       "libs": {
         "sap.m": {},${feLibs}${chartLibs}
         "sap.ui.core": {},${fLib}
@@ -213,16 +222,44 @@ function pageContext(o: FeAppOptions): string {
 
 /** The object page's route: through the parameters when there are any, by key when there are not. */
 function objectPagePattern(o: FeAppOptions): string {
-  const key = `${o.mainEntity.charAt(0).toLowerCase()}${o.mainEntity.slice(1)}Key`;
+  // sap.fe binds the object page from the route's key parameter; for a parameterised entity it
+  // expects the plain name 'key', not one derived from the entity
+  const key = o.parameters ? "key" : `${o.mainEntity.charAt(0).toLowerCase()}${o.mainEntity.slice(1)}Key`;
   if (!o.parameters) return `${o.mainEntity}({${key}}):?query:`;
   const params = o.parameters.keys.map((k) => `${k}={${k}}`).join(",");
   return `${o.parameters.entitySet}(${params})/${o.parameters.navigation}({${key}}):?query:`;
 }
 
+/**
+ * The root view of a Fiori elements app.
+ *
+ * A v4 app must not name a template's own view here: sap.fe builds its pages from routing targets,
+ * and pointing rootView at sap.fe.templates.<Floorplan>.view.<Floorplan> makes UI5 load a file that
+ * ships inside the library preload and not as a resource — the app then dies on a 404 and renders
+ * nothing. What belongs here is the container sap.fe navigates inside: NavContainer, or Fcl for a
+ * flexible column layout. The v2 templates do name their view, and there it is correct.
+ */
+function feRootView(o: FeAppOptions, v2ViewName: string): string {
+  const v4 = o.odataVersion === "4.0";
+  const viewName = v4 ? (o.addFcl ? "sap.fe.core.rootView.Fcl" : "sap.fe.core.rootView.NavContainer") : v2ViewName;
+  const id = v4 ? "appRootView" : `${o.mainEntity}Root`;
+  return `"rootView": {
+      "viewName": "${viewName}",
+      "type": "XML",
+      "async": true,
+      "id": "${id}"
+    }`;
+}
+
 function lrRoutingTargets(o: FeAppOptions): string {
-  const navSettings = o.navEntity
-    ? `,\n            "navigation": {\n              "${o.mainEntity}": {\n                "detail": { "route": "${o.mainEntity}ObjectPage" }\n              }\n            }`
-    : "";
+  // Without this the list report has no way to reach its object page: clicking a row selects a cell
+  // and nothing else happens. sap.fe only navigates where the manifest says a row leads.
+  const navSettings = `,
+            "navigation": {
+              "${o.mainEntity}": {
+                "detail": { "route": "${o.mainEntity}ObjectPage" }
+              }
+            }`;
   const opNav = o.navEntity
     ? `,\n            "navigation": {\n              "${o.mainEntity}": {\n                "detail": { "outlet": "${o.navEntity.navigationProperty}" }\n              }\n            }`
     : "";
@@ -362,12 +399,7 @@ ${feSapUi(o)},
       "suffix": "custom"
     },
     ${feModelSettings(o)},
-    "rootView": {
-      "viewName": "${v4 ? "sap.fe.templates.ListReport.view.ListReport" : "sap.suite.ui.generic.template.ListReport.view.ListReport"}",
-      "type": "XML",
-      "async": true,
-      "id": "${o.mainEntity}List"
-    },
+    ${feRootView(o, "sap.suite.ui.generic.template.ListReport.view.ListReport")},
     ${routingConfig(o)}
     ${lrRoutingTargets(o)}
   }
@@ -388,12 +420,7 @@ ${feSapUi(o)},
       "suffix": "custom"
     },
     ${feModelSettings(o)},
-    "rootView": {
-      "viewName": "sap.fe.templates.ObjectPage.view.ObjectPage",
-      "type": "XML",
-      "async": true,
-      "id": "${o.mainEntity}ObjectPage"
-    },
+    ${feRootView(o, "sap.suite.ui.generic.template.ObjectPage.view.Details")},
     ${routingConfig(o, { routerClass: "sap.m.routing.Router" })}
     ${opRoutingTargets(o)}
   }
@@ -521,24 +548,33 @@ export function feComponentJs(o: FeAppOptions): string {
 
 export function feIndexHtml(o: FeAppOptions): string {
   const v4 = o.odataVersion === "4.0";
+  // the bootstrap attribute is a comma-separated list, not JSON: quoting each name put double
+  // quotes inside a double-quoted attribute, which ends it early and leaves the page with no
+  // libraries at all
   const libs =
     o.floorplan === "overview-page"
-      ? '"sap.m", "sap.ovp"'
+      ? "sap.m,sap.ovp"
       : o.floorplan === "analytical-list-page" || !v4
-        ? '"sap.m", "sap.suite.ui.generic.template"'
-        : '"sap.m", "sap.fe.templates"';
+        ? "sap.m,sap.suite.ui.generic.template"
+        : "sap.m,sap.fe.templates";
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${o.title}</title>
+  <!-- the component container is 100% of a body that has no height of its own, so without this the
+       app renders correctly and occupies nothing -->
+  <style>
+    html, body, #content, #root { height: 100%; margin: 0; }
+  </style>
   <script id="sap-ui-bootstrap"
     src="resources/sap-ui-core.js"
     data-sap-ui-theme="sap_horizon"
     data-sap-ui-compat-version="edge"
     data-sap-ui-libraries="${libs}"
     data-sap-ui-async="true"
+    data-sap-ui-oninit="module:sap/ui/core/ComponentSupport"
     data-sap-ui-flexibility-services='[{"connector": "SessionStorageConnector", "connectorPersonalization": true}]'
     data-sap-ui-resourceroots='{
       "${o.appId}": "./"
@@ -546,7 +582,15 @@ export function feIndexHtml(o: FeAppOptions): string {
   </script>
 </head>
 <body class="sapUiBody" id="content">
-  <div data-sap-ui-component data-sap-ui-component-name="${o.appId}" data-sap-ui-resource-roots='{"${o.appId}": "./"}' id="root"></div>
+  <!-- ComponentSupport reads data-name/data-id/data-settings; the sap-ui-prefixed spellings
+       belong to the bootstrap script and are ignored here, leaving the container with no
+       component to start -->
+  <div data-sap-ui-component
+       data-name="${o.appId}"
+       data-id="container"
+       data-settings='{"id": "${o.appId}"}'
+       data-height="100%"
+       id="root"></div>
 </body>
 </html>
 `;
@@ -566,13 +610,52 @@ appDescription=${o.description ?? o.title}${ovpKeys}
 `;
 }
 
+/**
+ * The libraries the app needs at runtime, as the UI5 tooling resolves them.
+ *
+ * Without a framework block `ui5 serve` and `ui5 build` have nowhere to get /resources from, so the
+ * app the generator writes cannot be started by the very script it ships. The floorplan decides
+ * which template library belongs here, and the theme library is what keeps the app from rendering
+ * unstyled.
+ */
+function frameworkLibraries(o: FeAppOptions): string[] {
+  const v4 = o.odataVersion === "4.0";
+  const templates =
+    o.floorplan === "overview-page"
+      ? ["sap.ovp"]
+      : o.floorplan === "analytical-list-page" || !v4
+        ? ["sap.suite.ui.generic.template"]
+        : ["sap.fe.templates"];
+  return ["sap.m", "sap.ui.core", ...(o.addFcl ? ["sap.f"] : []), ...templates, "themelib_sap_horizon"];
+}
+
+/**
+ * The UI5 version the app targets.
+ *
+ * The manifest's minUI5Version and the framework version in ui5.yaml have to agree: the tooling
+ * downloads what ui5.yaml asks for, and sap.fe moved files between releases, so a manifest written
+ * for one release served by another fails on a missing view rather than on anything the app did.
+ */
+export function ui5Version(o: FeAppOptions): string {
+  return o.odataVersion === "4.0" ? "1.130.0" : "1.96.0";
+}
+
 export function feUi5Yaml(o: FeAppOptions, isCap: boolean): string {
+  const framework = `framework:
+  name: SAPUI5
+  version: "${ui5Version(o)}"
+  libraries:
+${frameworkLibraries(o)
+  .map((l) => `    - name: ${l}`)
+  .join(`
+`)}`;
   if (isCap) {
     return `# yaml-language-server: $schema=https://sap.github.io/ui5-tooling/schema/ui5.yaml.json
 specVersion: "3.1"
 metadata:
   name: ${o.appName}
 type: application
+${framework}
 `;
   }
   return `# yaml-language-server: $schema=https://sap.github.io/ui5-tooling/schema/ui5.yaml.json
@@ -580,13 +663,16 @@ specVersion: "3.1"
 metadata:
   name: ${o.appName}
 type: application
+${framework}
 server:
   customMiddleware:
+    # mountPath belongs to the middleware entry, not to its configuration: inside configuration it
+    # is ignored, the proxy mounts at / and answers for the app's own files too
     - name: ui5-middleware-simpleproxy
       afterMiddleware: compression
+      mountPath: /sap
       configuration:
         baseUri: ""
-        mountPath: /sap
 `;
 }
 

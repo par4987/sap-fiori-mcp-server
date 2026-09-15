@@ -9,6 +9,7 @@ import { validateManifest } from "../src/ui5/validate.js";
 import { runUi5Linter } from "../src/ui5/linter.js";
 import { generateFioriApp, pickMainEntitySet, parameterizedEntity } from "../src/fiori/generate.js";
 import { parseEdmx } from "../src/odata/edmx.js";
+import { feIndexHtml, feManifest, feUi5Yaml } from "../src/fiori/templates.js";
 import { createUi5App, createIntegrationCard } from "../src/ui5/scaffold.js";
 import {
   listFunctionalities,
@@ -348,7 +349,8 @@ describe("a CDS with parameters", () => {
     expect(targets["StatsList"]["options"]["settings"]["entitySet"]).toBeUndefined();
     expect(targets["StatsObjectPage"]["options"]["settings"]["contextPath"]).toBe("/Stats/Set");
     const routes = manifest["sap.ui5"]["routing"]["routes"];
-    expect(routes[1]["pattern"]).toBe("Stats(p_from={p_from},p_to={p_to})/Set({statsKey}):?query:");
+    // sap.fe binds the object page from a key parameter it expects to be called exactly "key"
+    expect(routes[1]["pattern"]).toBe("Stats(p_from={p_from},p_to={p_to})/Set({key}):?query:");
     // the caller must know parameters will be demanded before any data appears
     expect(result.warnings.join(" ")).toMatch(/p_from, p_to/);
     const check = await validateManifest(result.appPath);
@@ -400,6 +402,67 @@ describe("the generated package.json", () => {
       if (isCap) expect(pkg.devDependencies).toBeUndefined();
       else expect(pkg.devDependencies["@ui5/cli"]).toBeTruthy();
     }
+  });
+});
+
+describe("what makes a generated app actually run in a browser", () => {
+  const opts = (over: Record<string, unknown> = {}) =>
+    ({
+      namespace: "ns",
+      appId: "ns.app",
+      appName: "app",
+      title: "T",
+      entitySet: "Travels",
+      mainEntity: "Travels",
+      odataVersion: "4.0" as const,
+      serviceUri: "/srv/",
+      addFcl: false,
+      floorplan: "list-report" as const,
+      ...over
+    }) as Parameters<typeof feManifest>[0];
+
+  it("bootstraps the component instead of leaving an inert page", () => {
+    const html = feIndexHtml(opts());
+    // a quoted list inside a double-quoted attribute ends the attribute early
+    expect(html).toContain('data-sap-ui-libraries="sap.m,sap.fe.templates"');
+    // without ComponentSupport nothing ever instantiates the component
+    expect(html).toContain('data-sap-ui-oninit="module:sap/ui/core/ComponentSupport"');
+    // ComponentSupport reads data-name, not the sap-ui-prefixed spelling
+    expect(html).toContain('data-name="ns.app"');
+    // the container is 100% of a body that otherwise has no height
+    expect(html).toMatch(/html, body, #content, #root \{ height: 100%/);
+  });
+
+  it("pairs the root view with the router class sap.fe insists on", () => {
+    const plain = JSON.parse(feManifest(opts()))["sap.ui5"];
+    expect(plain.rootView.viewName).toBe("sap.fe.core.rootView.NavContainer");
+    expect(plain.routing.config.routerClass).toBe("sap.m.routing.Router");
+    const fcl = JSON.parse(feManifest(opts({ addFcl: true })))["sap.ui5"];
+    expect(fcl.rootView.viewName).toBe("sap.fe.core.rootView.Fcl");
+    expect(fcl.routing.config.routerClass).toBe("sap.f.routing.Router");
+    // a v2 app keeps naming its own template view, which is correct there
+    const v2 = JSON.parse(feManifest(opts({ odataVersion: "2.0" })))["sap.ui5"];
+    expect(v2.rootView.viewName).toContain("sap.suite.ui.generic.template");
+  });
+
+  it("lets a row reach the object page", () => {
+    const m = JSON.parse(feManifest(opts()))["sap.ui5"];
+    // without this, clicking a row selects a cell and nothing happens
+    expect(m.routing.targets.TravelsList.options.settings.navigation).toEqual({
+      Travels: { detail: { route: "TravelsObjectPage" } }
+    });
+  });
+
+  it("declares the libraries the tooling has to download, at the version the manifest asks for", () => {
+    const yaml = feUi5Yaml(opts(), false);
+    expect(yaml).toContain("framework:");
+    expect(yaml).toContain("    - name: sap.fe.templates");
+    expect(yaml).toContain("    - name: themelib_sap_horizon");
+    const minVersion = JSON.parse(feManifest(opts()))["sap.ui5"].dependencies.minUI5Version;
+    expect(yaml).toContain(`version: "${minVersion}"`);
+    // mountPath belongs to the middleware entry; inside configuration the proxy swallows every path
+    expect(yaml).toContain("      mountPath: /sap");
+    expect(yaml).not.toContain("        mountPath: /sap");
   });
 });
 
