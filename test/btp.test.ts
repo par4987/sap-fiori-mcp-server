@@ -239,6 +239,41 @@ describe("query_odata_data tool round trip", () => {
   });
 });
 
+describe("asking a V2 service for the row total", () => {
+  it("retries as $inlinecount, because Gateway never names $count when it refuses", async () => {
+    vi.stubEnv("SAP_DESTINATIONS_JSON", JSON.stringify([{ Name: "ERP", URL: "https://erp.example.com", Authentication: "BasicAuthentication", User: "u", Password: "p" }]));
+    const seen: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL) => {
+        const u = decodeURIComponent(String(url));
+        seen.push(u);
+        if (u.includes("$count=true")) {
+          // the message a real ABAP Gateway sends: it never mentions the option it disliked
+          return jsonResponse({ error: { code: "005056", message: { lang: "en", value: "Invalid system query option specified" } } }, 400);
+        }
+        return jsonResponse({ d: { __count: "9161", results: [{ ID: "1" }, { ID: "2" }] } });
+      })
+    );
+    const server = createMcpServer(config);
+    const client = new Client({ name: "test-client", version: "1.0.0" });
+    const [c, s] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(s), client.connect(c)]);
+    const res = await client.callTool({
+      name: "query_odata_data",
+      arguments: { entitySet: "Booking", destination: "ERP", top: 2, count: true }
+    });
+    expect(res.isError).toBeFalsy();
+    const data = JSON.parse((res.content as { type: string; text: string }[])[0].text);
+    expect(data.odataVersion).toBe("2.0");
+    expect(data.total).toBe(9161);
+    expect(seen[0]).toContain("$count=true");
+    expect(seen[1]).toContain("$inlinecount=allpages");
+    await client.close();
+    await server.close();
+  });
+});
+
 describe("Floorplan templates", () => {
   const base = {
     namespace: "ns",

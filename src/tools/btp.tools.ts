@@ -180,8 +180,12 @@ export function registerBtpTools(server: McpServer, config: AppConfig, name: (n:
         let version: "2.0" | "4.0" = args.odataVersion ?? "4.0";
         let url = buildUrl(version);
         let res = await request(url);
-        // the caller usually does not know the version; recover instead of failing on a V2 service
-        if (!res.ok && res.status === 400 && args.count && !args.odataVersion && /\$count/.test(res.text)) {
+        // The caller usually does not know the version; recover instead of failing on a V2 service.
+        // The rejection cannot be recognised by its text: Gateway answers "Invalid system query
+        // option specified" without ever naming $count, so matching on the message meant the
+        // recovery never ran against a real V2 service. Any 400 for a counted query is worth one
+        // retry — it is a GET, and the second shape is the only other one that exists.
+        if (!res.ok && res.status === 400 && args.count && !args.odataVersion) {
           version = "2.0";
           url = buildUrl(version);
           res = await request(url);
