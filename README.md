@@ -20,6 +20,8 @@ Un único binario que combina las capacidades de los tres servidores MCP de refe
 - **26 tools MCP** listas para usar con Claude Desktop, Claude Code, Cursor, VS Code (Copilot), Cline, Windsurf o cualquier cliente MCP.
 - **Soporte SAP BTP**: destinations desde variables de entorno, archivos o del **Destination Service** en la nube (OAuth2 automático, secretos siempre redactados).
 - **5 floorplans Fiori elements**: `list-report`, `object-page` (form entry), `worklist`, `analytical-list-page` (V2) y `overview-page` (V2).
+- **Apps que arrancan, no solo que validan**: cada variante (V4, V4 con parámetros, worklist, V2 y CAP) se ha abierto en un navegador contra un servicio real. Ver [Qué sale al generar una app](#-qué-sale-al-generar-una-app-y-qué-se-ha-comprobado).
+- **Anotaciones y entidad elegidas del propio servicio**: el documento de anotaciones de un servicio V2 se busca en el catálogo y se declara solo; la entidad principal sale de `UI.LineItem`/`HeaderInfo`/`DraftRoot`, no del orden del documento.
 - **Doble transporte**: `stdio` (por defecto) y **HTTP Streamable** (`--http --port 3001`) con API key opcional.
 - **Sin dependencias de SAP**: parser CDS, parser EDMX, cliente OData V2/V4 y motor de queries CSV implementados desde cero en TypeScript (~0 dependencias de runtime: solo el SDK oficial de MCP y zod).
 - **Documentación integrada**: corpus local de Fiori Elements, UI5, CAP, OPA5 y BTP con búsqueda TF-IDF — funciona sin conexión.
@@ -195,8 +197,8 @@ docker run -i --rm sap-fiori-mcp-server
 | `list_sap_systems` | Lista los sistemas SAP configurados (env vars o `~/.sap-fiori-mcp/systems.json`). |
 | `download_odata_service_metadata` | Descarga el `$metadata` EDMX de un servicio OData V2/V4 y lo guarda como `metadata.xml`; devuelve resumen de entity sets y tipos. Acepta `serviceUrl`, `systemName (+servicePath)` o `destination (+servicePath)` BTP. |
 | `get_metadata_summary` | Resume un `metadata.xml` local (entidades, claves, asociaciones, anotaciones). |
-| `generate_fiori_app_odata` | Genera una app Fiori elements para servicios OData no-CAP (p.ej. RAP). Acepta `destination`/`systemName` + `servicePath` —los mismos argumentos que descargaron la metadata— y escribe la URL real del servicio en el manifest. **Floorplans**: `list-report` (LR+ObjectPage, V4+V2), `object-page` (form entry, V4), `worklist` (V4+V2), `analytical-list-page` (V2), `overview-page` (V2). Opcional: FCL, initial load. Combos no soportados se ajustan con warning. |
-| `generate_fiori_app_cap` | Genera una app Fiori elements dentro de un proyecto CAP existente, resolviendo servicio y entidad del modelo CDS automáticamente. Floorplans: `list-report`, `object-page`, `worklist`. |
+| `generate_fiori_app_odata` | Genera una app Fiori elements para servicios OData no-CAP (p.ej. RAP). Acepta `destination`/`systemName` + `servicePath` —los mismos argumentos que descargaron la metadata— y escribe la URL real del servicio en el manifest. En V2 busca el documento de anotaciones del servicio en el catálogo y lo declara. Sin `entitySet` elige la entidad por sus anotaciones, no por el orden del documento. **Floorplans**: `list-report` (LR+ObjectPage, V4+V2), `object-page` (form entry, V4), `worklist` (V4+V2), `analytical-list-page` (V2), `overview-page` (V2). Opcional: FCL, initial load. Los combos no soportados se ajustan con warning, y avisa cuando al servicio le faltan las anotaciones que el floorplan necesita. |
+| `generate_fiori_app_cap` | Genera una app Fiori elements dentro de un proyecto CAP existente, resolviendo servicio y entidad del modelo CDS automáticamente. La URL del servicio sigue a la versión de `@sap/cds` del proyecto (cds 10 monta un `@path` absoluto tal cual; antes llevaba `/odata/v4` delante), la app arranca UI5 desde el CDN porque `cds` sirve la carpeta de la app y nada más, y avisa si la entidad no tiene `UI.LineItem` —sin ella la tabla sale sin columnas—. Floorplans: `list-report`, `object-page`, `worklist`. |
 | `list_functionality` | **Paso 1/3** — Lista las modificaciones soportadas para una app existente. |
 | `get_functionality_details` | **Paso 2/3** — Parámetros requeridos por una funcionalidad. |
 | `execute_functionality` | **Paso 3/3** — Ejecuta: `add_page`, `delete_page`, `add_controller_extension`, `enable_fcl`, `enable_initial_load`, `update_manifest`. |
@@ -227,7 +229,47 @@ docker run -i --rm sap-fiori-mcp-server
 |---|---|
 | `list_btp_destinations` | Lista los destinations disponibles: locales (env/JSON/archivo/carpeta) y del **BTP Destination Service** en la nube. Secretos redactados. |
 | `get_btp_destination` | Detalles de un destination (URL, auth, sap-client, headers) con secretos redactados y preview de la autenticación resuelta. |
-| `query_odata_data` | Ejecuta una query OData V2/V4 contra un entity set vía `destination` BTP, `systemName` de `list_sap_systems` o `serviceUrl` directa. Soporta `$filter`, `$top`, `$skip`, `$select`, `$orderby`, `$expand` y el total de filas (`$count` en V4, `$inlinecount` en V2, con detección automática). Es la contraparte remota de `query_cap_data`. |
+| `query_odata_data` | Ejecuta una query OData V2/V4 contra un entity set vía `destination` BTP, `systemName` de `list_sap_systems` o `serviceUrl` directa. Soporta `$filter`, `$top`, `$skip`, `$select`, `$orderby`, `$expand` y el total de filas (`$count` en V4, `$inlinecount` en V2). La versión se detecta sola: un servicio V2 rechaza `$count` sin nombrarlo —Gateway responde «Invalid system query option specified»— así que el reintento se decide por el código de estado, no por el texto. Es la contraparte remota de `query_cap_data`. |
+
+## 🧭 Qué sale al generar una app (y qué se ha comprobado)
+
+Las apps generadas se han **ejecutado en un navegador** contra servicios reales, no solo validado.
+Cada variante de esta tabla se abrió, cargó datos y se navegó:
+
+| Variante | Servicio de prueba | Resultado |
+|---|---|---|
+| OData V4, list report + object page | `/DMO/UI_TRAVEL_D_D` (BTP) | 4.136 viajes; detalle con su faceta de reservas |
+| OData V4, worklist | `/DMO/UI_TRAVEL_D_D` | carga sola, sin pulsar *Ir* |
+| OData V4, CDS con parámetros | binding propio sobre `/DMO/I_Travel_U` | sap.fe pide los parámetros y lista 2.017 filas |
+| OData V2, list report + object page | `ZUI_TRAVEL_APP` | 40 viajes con columnas, filtros y acciones; detalle con 4 reservas |
+| CAP (cds 10) | `examples/bookshop` | 6 libros con las columnas que describen las anotaciones |
+
+**Cómo se elige la entidad** cuando no se pasa `entitySet`: se toman los entity sets con
+`UI.LineItem`; de esos, los que además tienen `UI.HeaderInfo` o `UI.Facets` —un value help lleva
+`LineItem` para su popup, pero nadie le escribe un object page—; y entre los que quedan manda el
+`Common.DraftRoot` que declare el servicio, luego la raíz de la composición y luego
+`UI.SelectionFields`, que es la barra de filtros de la página sobre la que abre la app. Sin
+anotaciones se usa el primer entity set, como antes.
+
+**Anotaciones de un servicio V2**: un servicio Gateway guarda las anotaciones UI fuera de su
+`$metadata`. El generador pregunta al catálogo por el documento del servicio, lo declara como
+`ODataAnnotation`, guarda una copia en `localService/` y lo usa también para elegir la entidad.
+Sin catálogo, sin autorización o con el modelo vacío, la generación sigue igual que antes.
+
+**CDS con parámetros**: las páginas se direccionan por `contextPath` (`/Entidad/Set`), que es lo que
+hace que sap.fe pida los parámetros antes de cargar nada.
+
+### Limitaciones conocidas
+
+- **Sin object page para una entidad paramétrica.** sap.fe no lo contempla: resuelve la página contra
+  la entidad de parámetros y pide rutas que no existen (`…/Set('1')/p_from`), así que el detalle solo
+  podría abrir vacío. Se genera el list report y se avisa; expón la entidad resultado sin parámetros
+  si necesitas detalle.
+- **`analytical-list-page` necesita anotaciones analíticas** (`UI.Chart`, `UI.PresentationVariant`).
+  Si el servicio no las trae, se genera igual pero se avisa: la página abriría con un error.
+- **`overview-page` es un andamio**: arranca y pinta los marcos de las tarjetas, pero las tarjetas no
+  enlazan a datos. Descríbelas en `sap.ovp/cards` con su `annotationPath` antes de usarla. El aviso
+  lo dice al generar.
 
 ## 🖥️ Panel de conexiones
 
@@ -427,7 +469,7 @@ sap-fiori-mcp-server/
 │   ├── util/             # fs seguro, búsqueda TF-IDF, helpers XML
 │   └── docs/             # corpus documental integrado
 ├── examples/bookshop/    # Proyecto CAP demo (db + srv + datos CSV)
-├── test/                 # 61 tests (Vitest) con transport in-memory
+├── test/                 # 236 tests (Vitest) con transport in-memory
 ├── docs/AGENTS-rules.md  # Reglas para el modelo de IA
 ├── docs/NPM-PUBLISH.md   # Guía de publicación en npm
 ├── Dockerfile            # Multi-stage, node:22-alpine
@@ -439,7 +481,7 @@ sap-fiori-mcp-server/
 ```bash
 npm run build       # tsc → dist/
 npm run typecheck   # tsc --noEmit
-npm test            # vitest run (201 tests)
+npm test            # vitest run (236 tests)
 npm run test:watch  # vitest watch
 ```
 

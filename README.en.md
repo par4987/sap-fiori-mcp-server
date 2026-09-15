@@ -18,6 +18,8 @@ One binary that combines the capabilities of the three reference MCP servers of 
 - **26 MCP tools** for Claude Desktop, Claude Code, Cursor, VS Code (Copilot), Cline, Windsurf or any MCP client.
 - **SAP BTP support**: destinations from env vars, files or the cloud **Destination Service** (automatic OAuth2, secrets always redacted).
 - **5 Fiori elements floorplans**: `list-report`, `object-page` (form entry), `worklist`, `analytical-list-page` (V2) and `overview-page` (V2).
+- **Apps that start, not just validate**: every variant (V4, V4 with parameters, worklist, V2 and CAP) has been opened in a browser against a real service. See [What a generated app does](#what-a-generated-app-does-and-what-was-verified).
+- **Annotations and main entity taken from the service**: a V2 service's annotation document is looked up in the catalog and declared automatically; the main entity comes from `UI.LineItem`/`HeaderInfo`/`DraftRoot`, not from document order.
 - **Dual transport**: `stdio` (default) and **HTTP Streamable** (`--http --port 3001`) with optional API key.
 - **No SAP dependencies**: CDS parser, EDMX parser, OData V2/V4 client and a CSV query engine written from scratch (runtime deps: MCP SDK + zod only).
 - **Bundled documentation**: local corpus for Fiori Elements, UI5, CAP, OPA5 and BTP destinations with TF-IDF search — works offline.
@@ -49,7 +51,7 @@ npm install && npm run build
 ```bash
 git clone <this-repo> && cd sap-fiori-mcp-server
 npm install && npm run build
-npm test              # 201 unit + integration tests
+npm test              # 236 unit + integration tests
 npm start             # stdio mode
 npm run start:http    # HTTP mode on http://localhost:3001/mcp
 ```
@@ -118,6 +120,45 @@ docker run -i --rm sap-fiori-mcp-server   # stdio
 **CAP**: `search_model` (fuzzy over parsed .cds definitions), `get_cap_details` (elements, keys, associations, actions, annotations, service exposure), `query_cap_data` (CQN-like queries over `db/data/*.csv`: columns, and/or filters, eq/ne/gt/ge/lt/le, contains, order, skip/limit)
 
 **SAP BTP**: `list_btp_destinations` (local + Destination Service, redacted), `get_btp_destination` (details + resolved auth preview), `query_odata_data` (remote OData V2/V4 queries with $filter/$top/$skip/$select/$orderby/$expand/$count via destination, system or URL)
+
+## What a generated app does, and what was verified
+
+The generated apps have been **run in a browser** against real services, not only validated. Each
+variant below was opened, loaded data and navigated:
+
+| Variant | Service | Result |
+|---|---|---|
+| OData V4, list report + object page | `/DMO/UI_TRAVEL_D_D` (BTP) | 4,136 travels; detail page with its bookings facet |
+| OData V4, worklist | `/DMO/UI_TRAVEL_D_D` | loads on its own, without pressing *Go* |
+| OData V4, CDS with parameters | own binding over `/DMO/I_Travel_U` | sap.fe asks for the parameters, then lists 2,017 rows |
+| OData V2, list report + object page | `ZUI_TRAVEL_APP` | 40 travels with columns, filters and actions; detail with 4 bookings |
+| CAP (cds 10) | `examples/bookshop` | 6 books with the columns the annotations describe |
+
+**How the entity is chosen** when no `entitySet` is given: entity sets carrying `UI.LineItem`; of
+those, the ones that also carry `UI.HeaderInfo` or `UI.Facets` — a value help has `LineItem` for its
+popup, but nobody writes an object page for one; and among those, the service's own
+`Common.DraftRoot` decides, then the root of the composition, then `UI.SelectionFields`, which is the
+filter bar of the page an app opens on. With no annotations the first entity set is used, as before.
+
+**A V2 service's annotations** live outside its `$metadata`. The generator asks the catalog for the
+service's document, declares it as an `ODataAnnotation` data source, keeps a copy under
+`localService/` and folds it into the entity choice. No catalog, no authorisation or an empty
+annotation model all leave generation working exactly as before.
+
+**A CDS with parameters** is addressed by `contextPath` (`/Entity/Set`), which is what makes sap.fe
+ask for the parameters before loading anything.
+
+### Known limitations
+
+- **No object page for a parameterised entity.** sap.fe has no notion of parameters there: it
+  resolves the page against the parameter entity and asks for paths that do not exist
+  (`…/Set('1')/p_from`), so the detail page could only ever open empty. The list report is generated
+  and the reason is reported; expose the result entity without parameters if a detail page matters.
+- **`analytical-list-page` needs analytical annotations** (`UI.Chart`, `UI.PresentationVariant`). If
+  the service has none the app is still generated, with a warning: the page would open on an error.
+- **`overview-page` is a scaffold**: it starts and shows card placeholders, but the cards do not bind
+  to data. Describe them in `sap.ovp/cards` with their `annotationPath` first. The warning says so at
+  generation time.
 
 ## Connection admin panel
 
@@ -190,7 +231,7 @@ Copy the rules from [`docs/AGENTS-rules.md`](./docs/AGENTS-rules.md) into your `
 ```bash
 npm run build       # tsc → dist/
 npm run typecheck   # tsc --noEmit
-npm test            # vitest run (201 tests)
+npm test            # vitest run (236 tests)
 ```
 
 **Server evaluation**: [`eval/evaluation.xml`](./eval/evaluation.xml) holds 10 read-only questions

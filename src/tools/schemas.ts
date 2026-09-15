@@ -11,7 +11,7 @@ import { z } from "zod";
 /** Objects that carry extra, source-dependent keys must not be stripped. */
 const loose = <T extends z.ZodRawShape>(shape: T) => z.object(shape).passthrough();
 
-const row = z.record(z.unknown());
+const row = z.record(z.string(), z.unknown());
 
 export const paginationShape = {
   count: z.number().int().describe("Items returned in this response"),
@@ -213,7 +213,7 @@ export const capDetailsOutput = {
   namespace: z.string().optional(),
   projectionOn: z.string().optional(),
   includes: z.array(z.string()).optional(),
-  annotations: z.record(z.string()).optional(),
+  annotations: z.record(z.string(), z.string()).optional(),
   elements: z
     .array(
       loose({

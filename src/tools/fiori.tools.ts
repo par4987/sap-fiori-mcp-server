@@ -407,7 +407,7 @@ export function registerFioriTools(server: McpServer, config: AppConfig, name: (
       inputSchema: {
         appPath: z.string().describe("Absolute path to the app folder"),
         functionalityId: z.enum(["add_page", "delete_page", "add_controller_extension", "enable_fcl", "enable_initial_load", "update_manifest"]).describe("Functionality id"),
-        params: z.record(z.unknown()).optional().describe("Parameters required by the functionality (see get_functionality_details)")
+        params: z.record(z.string(), z.unknown()).optional().describe("Parameters required by the functionality (see get_functionality_details)")
       },
       outputSchema: executeFunctionalityOutput,
       annotations: WRITE_MODIFY
