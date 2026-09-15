@@ -251,10 +251,48 @@ function feRootView(o: FeAppOptions, v2ViewName: string): string {
     }`;
 }
 
+/**
+ * The object page route, where there is one.
+ *
+ * sap.fe has no object page for a parameterised entity: its converter knows nothing about
+ * parameters, so it resolves the page against the parameter entity and asks the service for
+ * `…/Set('1')/p_from` and `…/Set('1')/Set/TravelId` — paths that do not exist. The requests fail,
+ * the batch fails with them, and the page opens empty. A list report on its own works, so that is
+ * what such a service gets, and the caller is told why rather than shown a detail page that cannot
+ * load.
+ */
+function objectPageRoute(o: FeAppOptions): string {
+  if (o.parameters) return "";
+  return `{
+        "pattern": "${objectPagePattern(o)}",
+        "name": "${o.mainEntity}ObjectPage",
+        "target": "${o.mainEntity}ObjectPage"
+      }`;
+}
+
+/** The object page target, omitted for a parameterised service — see objectPageRoute. */
+function objectPageTarget(o: FeAppOptions, opNav: string): string {
+  if (o.parameters) return "";
+  return `,
+      "${o.mainEntity}ObjectPage": {
+        "type": "Component",
+        "id": "${o.mainEntity}ObjectPage",
+        "name": "sap.fe.templates.ObjectPage",
+        "options": {
+          "settings": {
+            ${pageContext(o)}${opNav}
+          }
+        }
+      }`;
+}
+
 function lrRoutingTargets(o: FeAppOptions): string {
   // Without this the list report has no way to reach its object page: clicking a row selects a cell
-  // and nothing else happens. sap.fe only navigates where the manifest says a row leads.
-  const navSettings = `,
+  // and nothing else happens. sap.fe only navigates where the manifest says a row leads — and on a
+  // parameterised service there is nowhere to go, because it gets no object page at all.
+  const navSettings = o.parameters
+    ? ""
+    : `,
             "navigation": {
               "${o.mainEntity}": {
                 "detail": { "route": "${o.mainEntity}ObjectPage" }
@@ -265,24 +303,21 @@ function lrRoutingTargets(o: FeAppOptions): string {
     : "";
   const secondRoute =
     o.navEntity && !o.addFcl
-      ? `,\n      {\n        "pattern": "${o.navEntity.entitySet}({${o.navEntity.navigationProperty}}):?query:",\n        "name": "${o.navEntity.entitySet}ObjectPage",\n        "target": "${o.navEntity.entitySet}ObjectPage"\n      }`
+      ? `{\n        "pattern": "${o.navEntity.entitySet}({${o.navEntity.navigationProperty}}):?query:",\n        "name": "${o.navEntity.entitySet}ObjectPage",\n        "target": "${o.navEntity.entitySet}ObjectPage"\n      }`
       : "";
   const secondTarget =
     o.navEntity && !o.addFcl
       ? `,\n      "${o.navEntity.entitySet}ObjectPage": {\n        "type": "Component",\n        "id": "${o.navEntity.entitySet}ObjectPage",\n        "name": "sap.fe.templates.ObjectPage",\n        "options": {\n          "settings": {\n            "entitySet": "${o.navEntity.entitySet}"\n          }\n        }\n      }`
       : "";
   const v2Template = "sap.suite.ui.generic.template.ListReport";
-  return `"routes": [
-      {
+  const listRoute = `{
         "pattern": ":?query:",
         "name": "${o.mainEntity}List",
         "target": "${o.mainEntity}List"
-      },
-      {
-        "pattern": "${objectPagePattern(o)}",
-        "name": "${o.mainEntity}ObjectPage",
-        "target": "${o.mainEntity}ObjectPage"
-      }${secondRoute}
+      }`;
+  const routeList = [listRoute, objectPageRoute(o), secondRoute].filter((r) => r).join("," + String.fromCharCode(10) + "      ");
+  return `"routes": [
+      ${routeList}
     ],
     "targets": {
       "${o.mainEntity}List": {
@@ -304,17 +339,7 @@ function lrRoutingTargets(o: FeAppOptions): string {
             }
           }
         }
-      },
-      "${o.mainEntity}ObjectPage": {
-        "type": "Component",
-        "id": "${o.mainEntity}ObjectPage",
-        "name": "sap.fe.templates.ObjectPage",
-        "options": {
-          "settings": {
-            ${pageContext(o)}${opNav}
-          }
-        }
-      }${secondTarget}
+      }${objectPageTarget(o, opNav)}${secondTarget}
     }`;
 }
 

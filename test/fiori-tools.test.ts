@@ -330,7 +330,7 @@ describe("a CDS with parameters", () => {
     expect(pickMainEntitySet(parseEdmx(PARAMETERIZED))).toBe("Stats");
   });
 
-  it("addresses the pages through the parameters instead of the parameter records", async () => {
+  it("addresses the list through the parameters instead of the parameter records", async () => {
     const ws = path.join(tmp, "gen-param", "ws");
     fs.mkdirSync(ws, { recursive: true });
     const result = await generateFioriApp({
@@ -343,16 +343,37 @@ describe("a CDS with parameters", () => {
       isCap: false
     });
     const manifest = JSON.parse(fs.readFileSync(path.join(result.appPath, "webapp", "manifest.json"), "utf8"));
-    const targets = manifest["sap.ui5"]["routing"]["targets"];
+    const settings = manifest["sap.ui5"]["routing"]["targets"]["StatsList"]["options"]["settings"];
     // a list of parameter records is not an app; the rows live behind the navigation
-    expect(targets["StatsList"]["options"]["settings"]["contextPath"]).toBe("/Stats/Set");
-    expect(targets["StatsList"]["options"]["settings"]["entitySet"]).toBeUndefined();
-    expect(targets["StatsObjectPage"]["options"]["settings"]["contextPath"]).toBe("/Stats/Set");
-    const routes = manifest["sap.ui5"]["routing"]["routes"];
-    // sap.fe binds the object page from a key parameter it expects to be called exactly "key"
-    expect(routes[1]["pattern"]).toBe("Stats(p_from={p_from},p_to={p_to})/Set({key}):?query:");
+    expect(settings["contextPath"]).toBe("/Stats/Set");
+    expect(settings["entitySet"]).toBeUndefined();
     // the caller must know parameters will be demanded before any data appears
     expect(result.warnings.join(" ")).toMatch(/p_from, p_to/);
+    const check = await validateManifest(result.appPath);
+    expect(check.issues).toEqual([]);
+  });
+
+  it("generates no object page, because sap.fe has none for a parameterised entity", async () => {
+    const ws = path.join(tmp, "gen-param-noop", "ws");
+    fs.mkdirSync(ws, { recursive: true });
+    const result = await generateFioriApp({
+      targetPath: ws,
+      appName: "statsnoop",
+      title: "Stats",
+      metadataXml: PARAMETERIZED,
+      serviceUrl: "/odata/v4/stats/",
+      floorplan: "list-report",
+      isCap: false
+    });
+    const manifest = JSON.parse(fs.readFileSync(path.join(result.appPath, "webapp", "manifest.json"), "utf8"));
+    const routing = manifest["sap.ui5"]["routing"];
+    // sap.fe resolves such a page against the parameter entity and asks for paths that do not exist
+    // (…/Set('1')/p_from, …/Set('1')/Set/TravelId), so the detail page could only ever open empty
+    expect(Object.keys(routing.targets)).toEqual(["StatsList"]);
+    expect(routing.routes.map((r: { pattern: string }) => r.pattern)).toEqual([":?query:"]);
+    // a row must not offer a navigation that leads nowhere
+    expect(routing.targets.StatsList.options.settings.navigation).toBeUndefined();
+    expect(result.warnings.join(" ")).toMatch(/No object page was generated/);
     const check = await validateManifest(result.appPath);
     expect(check.issues).toEqual([]);
   });

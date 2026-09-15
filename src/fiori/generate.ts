@@ -227,6 +227,11 @@ export async function generateFioriApp(params: {
         `'${entitySet}' is a CDS with parameters (${parameters.parameters.join(", ")}); the app is built on ` +
           `${entitySet}/${parameters.navigation} and sap.fe will ask for them before loading data.`
       );
+      warnings.push(
+        "No object page was generated: sap.fe has no object page for a parameterised entity — it resolves the " +
+          "page against the parameter entity and asks the service for paths that do not exist, so the page opens " +
+          "empty. The list report works on its own; expose the result entity without parameters if a detail page is needed."
+      );
     }
   } else if (!entitySet) {
     warnings.push("No metadata and no entitySet provided; using placeholder entitySet 'Main'. Run download_odata_service_metadata and update the manifest.");
