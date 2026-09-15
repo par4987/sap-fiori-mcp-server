@@ -490,6 +490,25 @@ describe("what makes a generated app actually run in a browser", () => {
     }
   });
 
+  it("bootstraps a CAP app from the CDN, because cds serves the app folder and nothing else", () => {
+    const inCap = feIndexHtml(opts({ isCap: true }));
+    expect(inCap).toContain('src="https://ui5.sap.com/resources/sap-ui-core.js"');
+    // a pinned minor is often not a path the CDN hosts
+    expect(inCap).not.toMatch(/ui5\.sap\.com\/1\./);
+    // a standalone app is served by the tooling, which serves /resources itself
+    expect(feIndexHtml(opts())).toContain('src="resources/sap-ui-core.js"');
+  });
+
+  it("gives each page its column when the app uses a flexible column layout", () => {
+    const fcl = JSON.parse(feManifest(opts({ addFcl: true })))["sap.ui5"].routing;
+    // a controlId in the config points at a control sap.fe's root view does not have
+    expect(fcl.config).toEqual({ routerClass: "sap.f.routing.Router" });
+    expect(fcl.targets.TravelsList.controlAggregation).toBe("beginColumnPages");
+    expect(fcl.targets.TravelsObjectPage.controlAggregation).toBe("midColumnPages");
+    const plain = JSON.parse(feManifest(opts()))["sap.ui5"].routing;
+    expect(plain.targets.TravelsList.controlAggregation).toBeUndefined();
+  });
+
   it("lets a row reach the object page", () => {
     const m = JSON.parse(feManifest(opts()))["sap.ui5"];
     // without this, clicking a row selects a cell and nothing happens

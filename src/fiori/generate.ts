@@ -369,7 +369,8 @@ export async function generateFioriApp(params: {
     initialLoad: params.initialLoad,
     annotations: annotationFiles.map(({ name, uri, localUri }) => ({ name, uri, localUri })),
     parameters: parameters ? { entitySet: parameters.entitySet, navigation: parameters.navigation, keys: parameters.parameters } : undefined,
-    cardFields: cardFields()
+    cardFields: cardFields(),
+    isCap: params.isCap
   };
 
   const files: Record<string, string> = {

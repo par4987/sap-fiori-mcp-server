@@ -32,6 +32,8 @@ export interface FeAppOptions {
   parameters?: { entitySet: string; navigation: string; keys: string[] };
   /** Fields an overview page card shows, taken from the entity rather than invented. */
   cardFields?: { title: string; subtitle?: string };
+  /** True when the app lives inside a CAP project, which changes who serves it. */
+  isCap?: boolean;
   addFcl: boolean;
   floorplan: Floorplan;
   initialLoad?: boolean;
@@ -172,10 +174,13 @@ function routingConfig(o: FeAppOptions, overrides: { routerClass?: string } = {}
   // NavContainer goes with sap.m.routing.Router, Fcl with sap.f.routing.Router. Nothing else
   // belongs in a v4 config — viewType and viewPath describe views the app does not own.
   if (o.odataVersion === "4.0") {
+    // With a flexible column layout sap.fe expects each target to name its column; a controlId in
+    // the config points at a control its own root view does not have, and the router then fails on
+    // attachStateChange of undefined.
     return `"routing": {
       "config": {
         "routerClass": "${o.addFcl ? "sap.f.routing.Router" : "sap.m.routing.Router"}"
-      }${fclLayouts},`;
+      },`;
   }
   return `"routing": {
       "config": {
@@ -284,7 +289,8 @@ function objectPageTarget(o: FeAppOptions, opNav: string): string {
       "${o.mainEntity}ObjectPage": {
         "type": "Component",
         "id": "${o.mainEntity}ObjectPage",
-        "name": "sap.fe.templates.ObjectPage",
+        "name": "sap.fe.templates.ObjectPage",${o.addFcl ? `
+        "controlAggregation": "midColumnPages",` : ""}
         "options": {
           "settings": {
             ${pageContext(o)}${opNav}
@@ -386,7 +392,8 @@ function lrRoutingTargets(o: FeAppOptions): string {
       "${o.mainEntity}List": {
         "type": "Component",
         "id": "${o.mainEntity}List",
-        "name": "${o.odataVersion === "4.0" ? "sap.fe.templates.ListReport" : v2Template}",
+        "name": "${o.odataVersion === "4.0" ? "sap.fe.templates.ListReport" : v2Template}",${o.addFcl ? `
+        "controlAggregation": "beginColumnPages",` : ""}
         "options": {
           "settings": {
             ${pageContext(o)},
@@ -623,6 +630,12 @@ export function feComponentJs(o: FeAppOptions): string {
 }
 
 export function feIndexHtml(o: FeAppOptions): string {
+  // A standalone app is served by the UI5 tooling, which serves /resources itself. An app inside a
+  // CAP project is served by cds, which serves the app folder and nothing else: a relative bootstrap
+  // 404s and the page stays blank, so that one loads UI5 from the CDN.
+  // the CDN serves versions it hosts, and a pinned minor is often not one of them (1.130.0 is a
+  // 404 there); its root always resolves, and the manifest's minUI5Version still states the floor
+  const bootstrap = o.isCap ? "https://ui5.sap.com/resources/sap-ui-core.js" : "resources/sap-ui-core.js";
   const v4 = o.odataVersion === "4.0";
   // the bootstrap attribute is a comma-separated list, not JSON: quoting each name put double
   // quotes inside a double-quoted attribute, which ends it early and leaves the page with no
@@ -645,7 +658,7 @@ export function feIndexHtml(o: FeAppOptions): string {
     html, body, #content, #root { height: 100%; margin: 0; }
   </style>
   <script id="sap-ui-bootstrap"
-    src="resources/sap-ui-core.js"
+    src="${bootstrap}"
     data-sap-ui-theme="sap_horizon"
     data-sap-ui-compat-version="edge"
     data-sap-ui-libraries="${libs}"

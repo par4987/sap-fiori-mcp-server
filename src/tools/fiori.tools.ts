@@ -6,7 +6,7 @@ import { listFioriApps } from "../fiori/apps.js";
 import { buildCdsModel, getServiceExposure } from "../cap/model.js";
 import { generateFioriApp } from "../fiori/generate.js";
 import { listFunctionalities, getFunctionalityDetails, executeFunctionality } from "../fiori/functionality.js";
-import { resolvePath, readText, writeFileSafe, relativePaths } from "../util/fs.js";
+import { resolvePath, readText, writeFileSafe, relativePaths, tryReadJson } from "../util/fs.js";
 import { resolveSystem, fetchServiceMetadata } from "../odata/client.js";
 import { resolveODataTarget, resolveODataUrl } from "../btp/destinations.js";
 import { parseEdmx } from "../odata/edmx.js";
@@ -25,6 +25,19 @@ import {
 export const FLOORPLANS_V4 = ["list-report", "object-page", "worklist"] as const;
 export const FLOORPLANS_ALL = ["list-report", "object-page", "worklist", "analytical-list-page", "overview-page"] as const;
 export type Floorplan = (typeof FLOORPLANS_ALL)[number];
+
+/**
+ * The major @sap/cds version a CAP project builds against, or null when it cannot be told.
+ *
+ * It decides where a service with an absolute @path is served: cds 10 mounts it exactly there,
+ * earlier releases put /odata/v4 in front of it.
+ */
+function capMajorVersion(root: string): number | null {
+  const pkg = tryReadJson<{ dependencies?: Record<string, string>; devDependencies?: Record<string, string> }>(path.join(root, "package.json"));
+  const range = pkg?.dependencies?.["@sap/cds"] ?? pkg?.devDependencies?.["@sap/cds"];
+  const major = range ? /(\d+)/.exec(range)?.[1] : undefined;
+  return major ? Number(major) : null;
+}
 
 export function registerFioriTools(server: McpServer, config: AppConfig, name: (n: string) => string = (n) => n): void {
   server.registerTool(
@@ -277,12 +290,32 @@ export function registerFioriTools(server: McpServer, config: AppConfig, name: (
           const svcDef = model.definitions.find((d) => d.name === exposure.service);
           const pathAnno = svcDef?.annotations["path"];
           const nsGuess = svcDef?.namespace ?? exposure.service;
-          serviceUri = pathAnno ? `/odata/v4/${pathAnno.replace(/^\//, "")}/` : `/odata/v4/${nsGuess.split(".").pop()}/${exposure.service.split(".").pop()}/`;
+          // An absolute @path is where the service is mounted, and cds 10 mounts it there verbatim:
+          // /odata/v4 in front of it is a 404. Earlier releases did prefix it, so the project's own
+          // @sap/cds version decides, and a project that pins nothing is treated as current.
+          const major = capMajorVersion(root);
+          serviceUri = pathAnno
+            ? major !== null && major < 10
+              ? `/odata/v4/${pathAnno.replace(/^\//, "")}/`
+              : `/${pathAnno.replace(/^\//, "")}/`
+            : `/odata/v4/${nsGuess.split(".").pop()}/${exposure.service.split(".").pop()}/`;
           if (!entitySet && exposure.exposed.length) entitySet = exposure.exposed[0].name;
         }
         if (!entitySet) {
           warnings.push("Could not resolve an entity from the CDS model; using placeholder 'Main'. Adjust the manifest after generation.");
           entitySet = "Main";
+        }
+        // A list report draws its columns from UI.LineItem. Without it sap.fe renders "add columns
+        // to see content" and the app looks broken to whoever opens it, so say it here instead.
+        const entityDef = model.definitions.find(
+          (d) => d.name === `${exposure?.service}.${entitySet}` || d.name.split(".").pop() === entitySet
+        );
+        const annotationNames = Object.keys(entityDef?.annotations ?? {});
+        if (!annotationNames.some((a) => /^UI\.LineItem/.test(a))) {
+          warnings.push(
+            `'${entitySet}' carries no UI.LineItem annotation, so the generated list has no columns. ` +
+              "Annotate the entity in CDS (@UI.lineItem: [{ value: '<field>' }]) and the table fills itself."
+          );
         }
 
         const result = await generateFioriApp({
