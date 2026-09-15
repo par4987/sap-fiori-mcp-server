@@ -590,24 +590,39 @@ server:
 `;
 }
 
+/**
+ * The app's package.json.
+ *
+ * A standalone app owns its server, so it declares the UI5 CLI and the start scripts. An app inside
+ * a CAP project does not: `cds watch` serves it, and a second toolchain there is noise. The members
+ * are assembled as a list rather than interpolated around a comma, because the CAP branch used to
+ * drop a bare `{}` where a member belonged and every generated CAP app shipped a package.json no
+ * parser would read.
+ */
 export function fePackageJson(o: FeAppOptions, isCap: boolean): string {
-  const scripts = isCap
-    ? `"scripts": {}`
-    : `"scripts": {
+  // members are joined with a comma and the indent the object uses
+  const JOIN = `,
+  `;
+  const members = [
+    `"name": "${o.appName}"`,
+    `"version": "1.0.0"`,
+    `"private": true`,
+    `"description": "${o.description ?? o.title}"`
+  ];
+  if (!isCap) {
+    members.push(
+      `"scripts": {
     "start": "ui5 serve --open index.html",
     "start-mock": "ui5 serve --open index.html"
-  }`;
-  const devDeps = isCap ? `{}` : `"devDependencies": {
+  }`,
+      `"devDependencies": {
     "@ui5/cli": "^3",
     "ui5-middleware-simpleproxy": "^0.9"
-  }`;
+  }`
+    );
+  }
   return `{
-  "name": "${o.appName}",
-  "version": "1.0.0",
-  "private": true,
-  "description": "${o.description ?? o.title}",
-  ${scripts},
-  ${devDeps}
+  ${members.join(JOIN)}
 }
 `;
 }

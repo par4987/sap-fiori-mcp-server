@@ -376,6 +376,33 @@ describe("a CDS with parameters", () => {
   });
 });
 
+describe("the generated package.json", () => {
+  const make = (isCap: boolean, appName: string) =>
+    generateFioriApp({
+      targetPath: fs.mkdtempSync(path.join(os.tmpdir(), "mcp-pkg-")),
+      appName,
+      title: "T",
+      entitySet: "Books",
+      serviceUrl: "/odata/v4/browse/",
+      floorplan: "list-report",
+      isCap
+    });
+
+  it("is JSON a parser accepts, inside a CAP project and outside it", async () => {
+    for (const isCap of [true, false]) {
+      const result = await make(isCap, isCap ? "capapp" : "soloapp");
+      const raw = fs.readFileSync(path.join(result.appPath, "package.json"), "utf8");
+      // the CAP branch used to emit a bare {} where a member belonged
+      expect(() => JSON.parse(raw)).not.toThrow();
+      const pkg = JSON.parse(raw);
+      expect(pkg.name).toBeTruthy();
+      // cds serves an app inside a CAP project: a second toolchain there is noise
+      if (isCap) expect(pkg.devDependencies).toBeUndefined();
+      else expect(pkg.devDependencies["@ui5/cli"]).toBeTruthy();
+    }
+  });
+});
+
 describe("generateFioriApp", () => {
   it("generates a standalone FE v4 app from metadata", async () => {
     const ws = path.join(tmp, "gen", "ws");

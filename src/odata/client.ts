@@ -118,25 +118,6 @@ export async function fetchServiceMetadata(
 }
 
 /** Query an entity set with OData system query options ($filter/$top/$skip/$select/$count). */
-export async function queryEntitySet(
-  serviceUrl: string,
-  entitySet: string,
-  params: { filter?: string; top?: number; skip?: number; select?: string; orderBy?: string; count?: boolean },
-  system?: SapSystem,
-  timeoutMs?: number
-): Promise<ODataResponse> {
-  const base = serviceUrl.replace(/\/$/, "");
-  const url = appendSearchParams(`${base}/${entitySet}`, {
-    $filter: params.filter,
-    $top: params.top !== undefined ? String(params.top) : undefined,
-    $skip: params.skip !== undefined ? String(params.skip) : undefined,
-    $select: params.select,
-    $orderby: params.orderBy,
-    $count: params.count ? "true" : undefined,
-    $format: "json"
-  });
-  return odataRequest({ url, system, timeoutMs });
-}
 
 /** Resolve a system by name from config; "default" also falls back to canonical env vars. */
 export function resolveSystem(config: AppConfig, name?: string): SapSystem | undefined {
