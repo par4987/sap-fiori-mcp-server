@@ -30,6 +30,8 @@ export interface FeAppOptions {
    * so the pages are addressed by context path and sap.fe asks for the parameters before loading.
    */
   parameters?: { entitySet: string; navigation: string; keys: string[] };
+  /** Fields an overview page card shows, taken from the entity rather than invented. */
+  cardFields?: { title: string; subtitle?: string };
   addFcl: boolean;
   floorplan: Floorplan;
   initialLoad?: boolean;
@@ -148,6 +150,7 @@ function feModelSettings(o: FeAppOptions): string {
       "": {
         "dataSource": "mainService",
         "preload": true,
+        "type": "sap.ui.model.odata.v2.ODataModel",
         "settings": {
           "defaultBindingMode": "TwoWay",
           "defaultCountMode": "Inline",
@@ -537,8 +540,6 @@ function ovpManifest(o: FeAppOptions): string {
 ${feSapApp(o)},
 ${feSapUi(o)},
   "sap.ovp": {
-    "globalFilterModel": "",
-    "globalFilterContextPath": "",
     "cards": {
       "card00": {
         "model": "",
@@ -548,9 +549,8 @@ ${feSapUi(o)},
           "subTitle": "{{cardSubtitle}}",
           "entitySet": "${o.entitySet}",
           "listFlavor": "Standard",
-          "sortBy": "",
-          "itemTitle": "/Name",
-          "itemSubTitle": "/Description"
+          "itemTitle": "${o.cardFields?.title ?? "/Name"}",
+          "itemSubTitle": "${o.cardFields?.subtitle ?? "/Description"}"
         }
       }
     }
@@ -698,7 +698,9 @@ function frameworkLibraries(o: FeAppOptions): string[] {
   const v4 = o.odataVersion === "4.0";
   const templates =
     o.floorplan === "overview-page"
-      ? ["sap.ovp"]
+      ? // sap.ovp reaches for sap.fe at runtime and the tooling does not resolve it on its own:
+        // without these the cards never load and the page stays blank
+        ["sap.ovp", "sap.fe.macros", "sap.fe.placeholder", "sap.ui.comp", "sap.ushell"]
       : v4
         ? ["sap.fe.templates"]
         : // the v2 smart templates do not run without these two, and the manifest names them

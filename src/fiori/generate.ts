@@ -92,6 +92,35 @@ export function parameterizedEntity(model: EdmxModel, entitySetName: string): Pa
   return { entitySet: set.name, navigation: nav.name, parameters: type.properties.map((p) => p.name), resultType: shortName(nav.type) };
 }
 
+/**
+ * What a floorplan needs from the service, and whether the service has it.
+ *
+ * A floorplan is not a free choice: an analytical list page without UI.Chart opens on an error
+ * dialog, and a list report without UI.LineItem renders a table with no columns. The metadata says
+ * which of the two will happen, and saying so at generation time costs nothing — the alternative is
+ * an app that looks generated correctly and fails the moment it is opened.
+ */
+export function missingFloorplanAnnotations(model: EdmxModel, entitySet: string, floorplan: Floorplan): string[] {
+  const set = model.entitySets.find((e) => e.name === entitySet);
+  if (!set) return [];
+  const typeName = parameterizedEntity(model, entitySet)?.resultType ?? shortName(set.entityType);
+  const terms = model.annotations
+    .filter((a) => shortName(a.target) === typeName)
+    .flatMap((a) => a.terms.map((t) => t.term));
+  const has = (name: string): boolean => terms.some((t) => uiTerm(name).test(t));
+
+  const needed: string[] = [];
+  if (floorplan === "analytical-list-page") {
+    if (!has("Chart")) needed.push("UI.Chart");
+    if (!has("PresentationVariant") && !has("SelectionPresentationVariant")) needed.push("UI.PresentationVariant");
+  }
+  if (floorplan === "list-report" || floorplan === "worklist" || floorplan === "analytical-list-page") {
+    if (!has("LineItem")) needed.push("UI.LineItem");
+  }
+  if (floorplan === "object-page" && !has("Facets")) needed.push("UI.Facets");
+  return needed;
+}
+
 export function pickMainEntitySet(model: EdmxModel): string | undefined {
   const short = (qualified: string): string => qualified.split("/")[0].split(".").pop() ?? qualified;
   const listable = new Set(
@@ -259,6 +288,29 @@ export async function generateFioriApp(params: {
 
   const requestedFloorplan: Floorplan = params.floorplan ?? "list-report";
   const floorplan = resolveFloorplan(requestedFloorplan, odataVersion, warnings);
+  if (floorplan === "overview-page") {
+    // measured, not assumed: the generated page loads sap.ovp and renders its card skeletons, and
+    // the cards never bind. A real overview page describes each card with an annotation path of its
+    // own, which this scaffold does not invent.
+    warnings.push(
+      "The overview page is a scaffold: it starts and shows card placeholders, but the cards do not bind to data. " +
+        "Describe each card in sap.ovp/cards with an annotationPath (UI.SelectionVariant / UI.LineItem / UI.Chart) before using it."
+    );
+  }
+  if (metadataXml) {
+    const model = parseEdmx(metadataXml);
+    const annotated: EdmxModel = {
+      ...model,
+      annotations: [...model.annotations, ...annotationDocs.flatMap((a) => parseEdmx(a.xml).annotations)]
+    };
+    const missing = missingFloorplanAnnotations(annotated, entitySet, floorplan);
+    if (missing.length) {
+      warnings.push(
+        `The '${floorplan}' floorplan needs ${missing.join(", ")} on '${entitySet}', and the service declares none. ` +
+          "The app is generated, but the page will open empty or with an error until the annotations exist."
+      );
+    }
+  }
   if (params.addFcl && !floorplanSupportsFcl(floorplan)) {
     warnings.push(`Flexible Column Layout is not supported by the '${floorplan}' floorplan; FCL disabled.`);
   }
@@ -280,6 +332,28 @@ export async function generateFioriApp(params: {
     return { name: safe, uri, localUri: `localService/${safe}.xml`, xml: a.xml };
   });
 
+  /**
+   * What an overview page card puts on each line.
+   *
+   * The template used to name /Name and /Description, which most services do not have: the card
+   * then renders rows of nothing. The entity's own text-like fields are a guess too, but a guess
+   * the service can satisfy.
+   */
+  const cardFields = (): { title: string; subtitle?: string } | undefined => {
+    if (floorplan !== "overview-page" || !metadataXml) return undefined;
+    const model = parseEdmx(metadataXml);
+    // the set's type is qualified (cds_x.ZC_TRAVEL_MNGType); the model keys types by short name
+    const set = model.entitySets.find((e) => e.name === entitySet);
+    const type =
+      (set && model.entityTypes.find((t) => t.name === shortName(set.entityType))) ??
+      model.entityTypes.find((t) => t.name === mainEntity) ??
+      findEntityType(model, entitySet);
+    const texts = (type?.properties ?? []).filter((p) => /String/i.test(p.type) && !p.isKey).map((p) => p.name);
+    const names = texts.length ? texts : (type?.properties ?? []).map((p) => p.name);
+    if (!names.length) return undefined;
+    return { title: `/${names[0]}`, subtitle: names[1] ? `/${names[1]}` : undefined };
+  };
+
   const options: FeAppOptions = {
     namespace: appId.split(".").slice(0, -1).join("."),
     appId,
@@ -294,7 +368,8 @@ export async function generateFioriApp(params: {
     floorplan,
     initialLoad: params.initialLoad,
     annotations: annotationFiles.map(({ name, uri, localUri }) => ({ name, uri, localUri })),
-    parameters: parameters ? { entitySet: parameters.entitySet, navigation: parameters.navigation, keys: parameters.parameters } : undefined
+    parameters: parameters ? { entitySet: parameters.entitySet, navigation: parameters.navigation, keys: parameters.parameters } : undefined,
+    cardFields: cardFields()
   };
 
   const files: Record<string, string> = {

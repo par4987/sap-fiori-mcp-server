@@ -511,6 +511,61 @@ describe("what makes a generated app actually run in a browser", () => {
   });
 });
 
+describe("telling the caller what a floorplan will not do", () => {
+  const METADATA_ALP = `<?xml version="1.0"?><edmx:Edmx Version="1.0" xmlns:edmx="http://schemas.microsoft.com/ado/2007/06/edmx">
+  <edmx:DataServices xmlns:m="http://schemas.microsoft.com/ado/2007/08/dataservices/metadata" m:DataServiceVersion="2.0">
+    <Schema Namespace="svc" xmlns="http://schemas.microsoft.com/ado/2008/09/edm">
+      <EntityType Name="TravelType"><Key><PropertyRef Name="ID"/></Key>
+        <Property Name="ID" Type="Edm.String"/><Property Name="AgencyName" Type="Edm.String"/><Property Name="Memo" Type="Edm.String"/>
+      </EntityType>
+      <EntityContainer Name="Container" m:IsDefaultEntityContainer="true">
+        <EntitySet Name="Travel" EntityType="svc.TravelType"/>
+      </EntityContainer>
+      <Annotations Target="svc.TravelType" xmlns="http://docs.oasis-open.org/odata/ns/edm">
+        <Annotation Term="UI.LineItem"/>
+      </Annotations>
+    </Schema>
+  </edmx:DataServices>
+</edmx:Edmx>`;
+
+  const generate = (floorplan: "analytical-list-page" | "list-report" | "overview-page", name: string) =>
+    generateFioriApp({
+      targetPath: fs.mkdtempSync(path.join(os.tmpdir(), "mcp-fp-")),
+      appName: name,
+      title: "T",
+      entitySet: "Travel",
+      metadataXml: METADATA_ALP,
+      serviceUrl: "/sap/opu/odata/sap/Z/",
+      odataVersion: "2.0",
+      floorplan,
+      isCap: false
+    });
+
+  it("says when the service lacks the annotations the floorplan needs", async () => {
+    const alp = await generate("analytical-list-page", "alpapp");
+    // an ALP without a chart opens on an error dialog, and the metadata says so beforehand
+    expect(alp.warnings.join(" ")).toMatch(/UI\.Chart/);
+    expect(alp.warnings.join(" ")).toMatch(/UI\.PresentationVariant/);
+    // the list report has what it needs here, and must not be nagged about it
+    const lr = await generate("list-report", "lrapp");
+    expect(lr.warnings.join(" ")).not.toMatch(/floorplan needs/);
+  });
+
+  it("does not pass off the overview page as finished", async () => {
+    const ovp = await generate("overview-page", "ovpapp");
+    expect(ovp.warnings.join(" ")).toMatch(/scaffold/);
+  });
+
+  it("takes the overview card's fields from the entity instead of inventing them", async () => {
+    const ovp = await generate("overview-page", "ovpfields");
+    const manifest = JSON.parse(fs.readFileSync(path.join(ovp.appPath, "webapp", "manifest.json"), "utf8"));
+    const settings = manifest["sap.ovp"].cards.card00.settings;
+    // the template used to name /Name and /Description, which most services do not have
+    expect(settings.itemTitle).toBe("/AgencyName");
+    expect(settings.itemSubTitle).toBe("/Memo");
+  });
+});
+
 describe("generateFioriApp", () => {
   it("generates a standalone FE v4 app from metadata", async () => {
     const ws = path.join(tmp, "gen", "ws");
