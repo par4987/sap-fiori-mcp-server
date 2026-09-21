@@ -285,11 +285,17 @@ export interface DestinationPatch {
   previousName?: string;
 }
 
-export function saveDestination(patch: DestinationPatch): { ok: true; file: string } {
-  const name = patch.name.trim();
-  if (!/^[A-Za-z0-9._-]+$/.test(name)) {
+export function destinationFile(name: string): string {
+  const clean = name.trim();
+  if (!/^[A-Za-z0-9._-]+$/.test(clean) || clean === "." || clean === "..") {
     throw new Error(`'${name}' is not a usable destination name. Use letters, digits, dot, dash or underscore — it becomes the file name.`);
   }
+  return path.join(paths().destinationsDir, `${clean}.json`);
+}
+
+export function saveDestination(patch: DestinationPatch): { ok: true; file: string } {
+  const name = patch.name.trim();
+  const file = destinationFile(name);
   assertUrl(patch.url, name);
   const password = (patch.password ?? "").trim();
   if (password && !ENV_REF.test(password)) {
@@ -298,9 +304,7 @@ export function saveDestination(patch: DestinationPatch): { ok: true; file: stri
   }
   ENV_REF.lastIndex = 0;
 
-  const { destinationsDir } = paths();
-  const file = path.join(destinationsDir, `${name}.json`);
-  const previousFile = patch.previousName ? path.join(destinationsDir, `${patch.previousName}.json`) : file;
+  const previousFile = patch.previousName ? destinationFile(patch.previousName) : file;
   // carry every field we do not own straight through, so an exported clientSecret survives an edit
   const existing = readJsonFile<Record<string, unknown>>(previousFile, {});
 
@@ -326,7 +330,7 @@ export function saveDestination(patch: DestinationPatch): { ok: true; file: stri
 }
 
 export function deleteDestination(name: string): { ok: true } {
-  const file = path.join(paths().destinationsDir, `${name}.json`);
+  const file = destinationFile(name);
   if (!fs.existsSync(file)) throw new Error(`No destination file for '${name}'.`);
   fs.rmSync(file);
   return { ok: true };

@@ -162,6 +162,25 @@ describe("editing connections", () => {
     expect(((await res.json()) as { error: string }).error).toContain("not a usable destination name");
   });
 
+  // delete and previousName reach the file system just like name does, so they are validated too
+  it("refuses a traversing name on delete and on rename", async () => {
+    const victim = path.join(dir, "victim.json");
+    fs.writeFileSync(victim, "{}");
+
+    const del = await post("/api/destinations/delete", { name: "../victim" });
+    expect(del.status).toBe(400);
+    expect(((await del.json()) as { error: string }).error).toContain("not a usable destination name");
+
+    const rename = await post("/api/destinations/save", {
+      name: "CLOUD",
+      url: "https://h",
+      authType: "NoAuthentication",
+      previousName: "../victim"
+    });
+    expect(rename.status).toBe(400);
+    expect(fs.existsSync(victim)).toBe(true);
+  });
+
   it("refuses a URL that is not http(s)", async () => {
     const res = await post("/api/systems/save", { name: "X", url: "file:///etc/passwd" });
     expect(res.status).toBe(400);
