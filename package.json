@@ -1,6 +1,6 @@
 {
   "name": "@pired/sap-fiori-mcp-server",
-  "version": "1.25.0",
+  "version": "1.25.1",
   "description": "Unified Model Context Protocol (MCP) server for SAP Fiori development: Fiori Elements app generation (5 floorplans), UI5 metadata & tooling, CAP/CDS model introspection and SAP BTP destinations connectivity (OData V2/V4 queries). Inspired by @sap-ux/fiori-mcp-server, @ui5/mcp-server and @cap-js/mcp-server. Zero SAP dependencies.",
   "license": "MIT",
   "type": "module",
