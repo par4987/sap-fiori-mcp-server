@@ -1,5 +1,7 @@
 # @pired/sap-fiori-mcp-server
 
+[![CI](https://github.com/par4987/sap-fiori-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/par4987/sap-fiori-mcp-server/actions/workflows/ci.yml)
+
 **A unified Model Context Protocol (MCP) server for SAP Fiori development — built from scratch in TypeScript with no SAP dependencies.**
 
 One binary that combines the capabilities of the three reference MCP servers of the SAP ecosystem, **plus SAP BTP connectivity**:
