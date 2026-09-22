@@ -231,6 +231,39 @@ describe("btp_login tool", () => {
     expect(text).toContain("ERP");
   });
 
+  // An MCP client abandons a tool call after 60 s, and a human signing in through SSO with a
+  // second factor takes longer than that. The call has to come back with the URL and leave the
+  // login running, or the tool can never succeed in a real client.
+  it("comes back with the URL long before a client would give up, and keeps the login running", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "btp-login-"));
+    const keyPath = path.join(dir, "key.json");
+    fs.writeFileSync(
+      keyPath,
+      JSON.stringify({
+        uaa: { clientid: "sb-test!t1", clientsecret: "s", url: "https://tenant.authentication.us10.hana.ondemand.com" },
+        url: "https://abap.example"
+      })
+    );
+    vi.stubEnv(
+      "SAP_DESTINATIONS_JSON",
+      JSON.stringify([{ Name: "CLOUD", URL: "https://abap.example", Authentication: "OAuth2RefreshToken", serviceKeyPath: keyPath }])
+    );
+
+    const started = Date.now();
+    const res = await call({ destination: "CLOUD", noBrowser: true, waitSeconds: 0 });
+    const took = Date.now() - started;
+
+    expect(res.isError).toBeFalsy();
+    const data = JSON.parse((res.content as { type: string; text: string }[])[0].text);
+    expect(data.pending).toBe(true);
+    expect(data.signedIn).toBe(false);
+    expect(data.url).toContain("/oauth/authorize");
+    expect(data.url).toContain("code_challenge_method=S256");
+    expect(data.detail).toContain("call btp_login");
+    expect(took).toBeLessThan(15000); // the client's limit is 60 s
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
   it("refuses a destination that carries no service key, since there is no OAuth client", async () => {
     vi.stubEnv("SAP_DESTINATIONS_JSON", JSON.stringify([{ Name: "ERP", URL: "https://erp.example.com", Authentication: "NoAuthentication" }]));
     const res = await call({ destination: "ERP" });

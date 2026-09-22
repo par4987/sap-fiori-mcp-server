@@ -121,7 +121,7 @@ docker run -i --rm sap-fiori-mcp-server   # stdio
 
 **CAP**: `search_model` (fuzzy over parsed .cds definitions), `get_cap_details` (elements, keys, associations, actions, annotations, service exposure), `query_cap_data` (CQN-like queries over `db/data/*.csv`: columns, and/or filters, eq/ne/gt/ge/lt/le, contains, order, skip/limit)
 
-**SAP BTP**: `list_btp_destinations` (local + Destination Service, redacted), `get_btp_destination` (details + resolved auth preview), `btp_login` (opens the browser for the one-time BTP login of a destination and stores the refresh token; the one step a tool result cannot do by itself), `query_odata_data` (remote OData V2/V4 queries with $filter/$top/$skip/$select/$orderby/$expand/$count via destination, system or URL)
+**SAP BTP**: `list_btp_destinations` (local + Destination Service, redacted), `get_btp_destination` (details + resolved auth preview), `btp_login` (opens the browser for the one-time BTP login of a destination and stores the refresh token; returns `pending` with the URL, since a login takes longer than the 60 s a client waits for a tool call — call it again to collect the outcome), `query_odata_data` (remote OData V2/V4 queries with $filter/$top/$skip/$select/$orderby/$expand/$count via destination, system or URL)
 
 ## What a generated app does, and what was verified
 
@@ -233,7 +233,7 @@ Copy the rules from [`docs/AGENTS-rules.md`](./docs/AGENTS-rules.md) into your `
 ```bash
 npm run build       # tsc → dist/
 npm run typecheck   # tsc --noEmit
-npm test            # vitest run (240 tests)
+npm test            # vitest run (241 tests)
 ```
 
 **Server evaluation**: [`eval/evaluation.xml`](./eval/evaluation.xml) holds 10 read-only questions

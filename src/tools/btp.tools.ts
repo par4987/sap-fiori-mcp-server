@@ -22,6 +22,27 @@ const DESTINATION_HINT =
   "SAP_DESTINATIONS_DIR (one <name>.json per destination; default ~/.sap-fiori-mcp/destinations) or the BTP Destination Service " +
   "(BTP_CLIENT_ID/BTP_CLIENT_SECRET/BTP_TOKEN_URL/BTP_DESTINATION_API_URL, or a VCAP_SERVICES binding).";
 
+/**
+ * Logins in flight, by destination.
+ *
+ * A human signing in through SSO and a second factor takes longer than the 60 s an MCP client
+ * waits for a tool call by default, so this tool cannot simply block until the browser comes
+ * back: the client would abandon the request while the login was still going. The flow runs
+ * here instead, and the tool reports on it -- call it again to collect the outcome.
+ */
+interface LoginState {
+  url: string;
+  startedAt: number;
+  done: boolean;
+  signedIn?: boolean;
+  error?: string;
+  detail?: string;
+  identityProvider?: string;
+  sealed?: string;
+  sealError?: string;
+}
+const inFlight = new Map<string, LoginState>();
+
 export function registerBtpTools(server: McpServer, config: AppConfig, name: (n: string) => string = (n) => n): void {
   server.registerTool(
     name("list_btp_destinations"),
@@ -248,12 +269,14 @@ export function registerBtpTools(server: McpServer, config: AppConfig, name: (n:
       description:
         "Opens a browser for the one-time SAP BTP login of a destination and stores the refresh token it returns, so later calls renew themselves. " +
         "Use it when a destination fails with an expired or missing refresh token. The destination must carry a serviceKeyPath. " +
-        "The call blocks until the login finishes in the browser, or until timeoutSeconds elapses. " +
+        "Signing in takes longer than an MCP client waits for a tool call, so this returns 'pending' with the URL once the browser is open: " +
+        "finish the login there and call it again for the same destination to collect the outcome. " +
         "Set noBrowser to get the URL back instead, for a machine with no browser of its own.",
       inputSchema: {
         destination: z.string().describe("Name of the destination to sign in for, as list_btp_destinations reports it"),
         noBrowser: z.boolean().default(false).describe("Do not open a browser; return the URL to open by hand (over SSH, or in a container)"),
-        timeoutSeconds: z.number().int().min(30).max(600).default(300).describe("How long to wait for the browser to come back")
+        waitSeconds: z.number().int().min(0).max(45).default(20).describe("Seconds to hold this call waiting for a fast login before answering 'pending'. An MCP client abandons a tool call after 60 s, so this never goes near that."),
+        timeoutSeconds: z.number().int().min(30).max(600).default(300).describe("How long the login itself stays open in the background, waiting for the browser callback")
       },
       outputSchema: btpLoginOutput,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
@@ -268,29 +291,90 @@ export function registerBtpTools(server: McpServer, config: AppConfig, name: (n:
         if (!found.serviceKeyPath) {
           throw new Error(`Destination '${found.name}' has no serviceKeyPath, so there is no OAuth client to sign in with.`);
         }
-        const key = readServiceKeyFile(found.serviceKeyPath);
 
-        let url = "";
-        let identityProvider: string | undefined;
-        const result = await loginWithBrowser(key, {
-          noBrowser: args.noBrowser,
-          timeoutSeconds: args.timeoutSeconds,
-          onUrl: (u) => (url = u),
-          onIdentityProvider: (host) => (identityProvider = host)
-        });
-        const saved = saveRefreshToken(config.dataDir, found.name, result.refreshToken);
+        const existing = inFlight.get(found.name);
+        if (existing?.done) {
+          inFlight.delete(found.name); // report an outcome once, then let the next call start afresh
+          return json({
+            destination: found.name,
+            pending: false,
+            signedIn: existing.signedIn === true,
+            url: existing.url,
+            identityProvider: existing.identityProvider,
+            sealed: existing.sealed ?? "",
+            sealError: existing.sealError,
+            detail: existing.detail ?? existing.error ?? "The login ended without saying how."
+          });
+        }
+
+        if (!existing) {
+          const key = readServiceKeyFile(found.serviceKeyPath);
+          const state: LoginState = { url: "", startedAt: Date.now(), done: false };
+          const started = new Promise<void>((resolve) => {
+            void loginWithBrowser(key, {
+              noBrowser: args.noBrowser,
+              timeoutSeconds: args.timeoutSeconds,
+              onUrl: (u) => {
+                state.url = u;
+                resolve(); // the URL is what the caller needs; the callback can take minutes
+              },
+              onIdentityProvider: (host) => (state.identityProvider = host)
+            }).then(
+              (result) => {
+                const saved = saveRefreshToken(config.dataDir, found.name, result.refreshToken);
+                state.signedIn = true;
+                state.sealed = saved.kind;
+                state.sealError = saved.sealError;
+                state.detail = saved.sealError
+                  ? `Signed in. The refresh token is stored for '${found.name}', but DPAPI did not seal it: ${saved.sealError}`
+                  : `Signed in. The refresh token is stored for '${found.name}' and later calls renew themselves.`;
+              },
+              (e: unknown) => {
+                state.signedIn = false;
+                state.error = e instanceof Error ? e.message : String(e);
+              }
+            ).finally(() => {
+              state.done = true;
+              resolve();
+            });
+          });
+          inFlight.set(found.name, state);
+          await started;
+        }
+
+        const state = inFlight.get(found.name)!;
+        // A fast login finishes inside one call; a slow one does not, and must not hold the
+        // request past what the client is willing to wait.
+        const grace = Math.min(Math.max(args.waitSeconds, 0), 45) * 1000;
+        if (!state.done && grace > 0) {
+          const deadline = Date.now() + grace;
+          while (!state.done && Date.now() < deadline) await new Promise((r) => setTimeout(r, 250));
+        }
+
+        if (state.done) {
+          inFlight.delete(found.name);
+          return json({
+            destination: found.name,
+            pending: false,
+            signedIn: state.signedIn === true,
+            url: state.url,
+            identityProvider: state.identityProvider,
+            sealed: state.sealed ?? "",
+            sealError: state.sealError,
+            detail: state.detail ?? state.error ?? "The login ended without saying how."
+          });
+        }
 
         return json({
           destination: found.name,
-          tokenUrl: key.tokenUrl,
-          identityProvider,
-          url,
-          sealed: saved.kind,
-          sealError: saved.sealError,
-          signedIn: true,
-          detail: saved.sealError
-            ? `Signed in. The refresh token is stored for '${found.name}', but DPAPI did not seal it: ${saved.sealError}`
-            : `Signed in. The refresh token is stored for '${found.name}' and later calls renew themselves.`
+          pending: true,
+          signedIn: false,
+          url: state.url,
+          identityProvider: state.identityProvider,
+          sealed: "",
+          detail: args.noBrowser
+            ? `Open this URL to sign in: ${state.url} -- then call btp_login for '${found.name}' again to collect the result.`
+            : `A browser is open for the login of '${found.name}'. Finish it there, then call btp_login for '${found.name}' again to collect the result. If no browser appeared, open this URL yourself: ${state.url}`
         });
       } catch (e) {
         return err(e);
