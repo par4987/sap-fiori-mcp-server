@@ -407,7 +407,7 @@ async function fetchOAuthToken(d: BtpDestination, params: Record<string, string>
     // was the only place that ever said so
     const fix =
       params.grant_type === "refresh_token"
-        ? ` Run 'sap-fiori-mcp --btp-login --destination ${d.name}' to sign in again.`
+        ? ` Call the btp_login tool with destination '${d.name}' to sign in again, or run 'sap-fiori-mcp --btp-login --destination ${d.name}' in a terminal.`
         : "";
     throw new Error(`Destination '${d.name}': OAuth token request failed (HTTP ${res.status})${detail ? `: ${detail}` : ""}${fix}`);
   }
@@ -442,7 +442,7 @@ export async function buildAuthHeaders(d: BtpDestination, timeoutMs = 30000, dat
       if (!d.refreshToken) {
         throw new Error(
           `Destination '${d.name}': the refresh_token grant needs a token from a one-time browser login. ` +
-            "Run --btp-login to obtain one, or set refreshToken on the destination as ${env:NAME}."
+            `Call the btp_login tool with destination '${d.name}', or run --btp-login in a terminal, or set refreshToken on the destination as \${env:NAME}.`
         );
       }
       if (!d.clientId || !d.clientSecret) {

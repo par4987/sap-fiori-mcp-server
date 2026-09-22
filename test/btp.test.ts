@@ -208,6 +208,37 @@ describe("resolveODataTarget", () => {
   });
 });
 
+describe("btp_login tool", () => {
+  // Both refusals happen before any browser or network, which is what makes them testable --
+  // and what keeps a typo from parking the call on a login page for five minutes.
+  async function call(args: Record<string, unknown>) {
+    const server = createMcpServer(config);
+    const client = new Client({ name: "test-client", version: "1.0.0" });
+    const [c, s] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(s), client.connect(c)]);
+    const res = await client.callTool({ name: "btp_login", arguments: args });
+    await client.close();
+    await server.close();
+    return res;
+  }
+
+  it("names the destinations it knows when the one asked for is not there", async () => {
+    vi.stubEnv("SAP_DESTINATIONS_JSON", JSON.stringify([{ Name: "ERP", URL: "https://erp.example.com", Authentication: "NoAuthentication" }]));
+    const res = await call({ destination: "TYPO" });
+    expect(res.isError).toBe(true);
+    const text = (res.content as { type: string; text: string }[])[0].text;
+    expect(text).toContain("No destination called 'TYPO'");
+    expect(text).toContain("ERP");
+  });
+
+  it("refuses a destination that carries no service key, since there is no OAuth client", async () => {
+    vi.stubEnv("SAP_DESTINATIONS_JSON", JSON.stringify([{ Name: "ERP", URL: "https://erp.example.com", Authentication: "NoAuthentication" }]));
+    const res = await call({ destination: "ERP" });
+    expect(res.isError).toBe(true);
+    expect((res.content as { type: string; text: string }[])[0].text).toContain("no serviceKeyPath");
+  });
+});
+
 describe("query_odata_data tool round trip", () => {
   it("queries an entity set through a destination", async () => {
     vi.stubEnv("SAP_DESTINATIONS_JSON", JSON.stringify([{ Name: "ERP", URL: "https://erp.example.com", Authentication: "BasicAuthentication", User: "u", Password: "p" }]));

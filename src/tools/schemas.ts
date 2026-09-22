@@ -273,6 +273,17 @@ export const getDestinationOutput = {
   usage: row
 };
 
+export const btpLoginOutput = {
+  destination: z.string(),
+  signedIn: z.boolean(),
+  tokenUrl: z.string().describe("XSUAA token endpoint the service key points at"),
+  identityProvider: z.string().optional().describe("Host that actually asked for the credentials, when it could be resolved"),
+  url: z.string().describe("Authorize URL that was opened, or the one to open by hand when noBrowser was set"),
+  sealed: z.string().describe("How the refresh token was stored: 'dpapi' on Windows, 'plain' elsewhere"),
+  sealError: z.string().optional().describe("Set when sealing failed and the token was stored in the clear"),
+  detail: z.string()
+};
+
 export const queryODataOutput = {
   source: z.string(),
   appliedUrl: z.string(),

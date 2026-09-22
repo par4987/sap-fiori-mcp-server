@@ -66,6 +66,7 @@ describe("tool contract", () => {
     const writing = tools.filter((t) => !t.annotations?.readOnlyHint).map((t) => t.name).sort();
     expect(writing).toEqual(
       [
+        "btp_login", // not scaffolding, but it writes a refresh token to disk
         "create_integration_card",
         "create_ui5_app",
         "download_odata_service_metadata",

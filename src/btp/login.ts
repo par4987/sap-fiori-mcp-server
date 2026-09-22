@@ -253,14 +253,16 @@ export function loginWithBrowser(key: ParsedServiceKey, opts: LoginOptions = {})
       authorize.searchParams.set("code_challenge_method", "S256");
 
       const url = authorize.toString();
-      void (async () => {
-        if (opts.onIdentityProvider) {
-          const host = await identityProvider(url, 10000);
-          if (host) opts.onIdentityProvider(host);
-        }
-        opts.onUrl?.(url);
-        if (!opts.noBrowser) openBrowser(url);
-      })();
+      // Open first. Naming the identity provider is a diagnostic aside that costs a network
+      // round trip, and doing it first held the browser back by as much as its 10 s timeout
+      // while the caller had already told the operator the browser was opening.
+      opts.onUrl?.(url);
+      if (!opts.noBrowser) openBrowser(url);
+      if (opts.onIdentityProvider) {
+        void identityProvider(url, 10000).then((host) => {
+          if (host) opts.onIdentityProvider?.(host);
+        });
+      }
     });
   });
 }

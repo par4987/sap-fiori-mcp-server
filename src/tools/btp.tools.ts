@@ -11,8 +11,11 @@ import {
   resolveODataTarget
 } from "../btp/destinations.js";
 import { odataRequest, appendSearchParams, extractRows, isNotOData, notODataMessage } from "../odata/client.js";
+import { loginWithBrowser } from "../btp/login.js";
+import { readServiceKeyFile } from "../btp/service-key.js";
+import { saveRefreshToken } from "../btp/token-store.js";
 import { json, err, READ_REMOTE } from "./index.js";
-import { listDestinationsOutput, getDestinationOutput, queryODataOutput } from "./schemas.js";
+import { listDestinationsOutput, getDestinationOutput, queryODataOutput, btpLoginOutput } from "./schemas.js";
 
 const DESTINATION_HINT =
   "Destinations are loaded from SAP_DESTINATIONS_JSON (inline JSON array), SAP_DESTINATIONS_FILE, " +
@@ -229,6 +232,65 @@ export function registerBtpTools(server: McpServer, config: AppConfig, name: (n:
           nextSkip: hasMore ? skip + returned.length : null,
           rows: returned,
           destination: target.destination
+        });
+      } catch (e) {
+        return err(e);
+      }
+    }
+  );
+  // The one step that cannot be done from a tool result: BTP delegates to an identity provider
+  // with SSO and a second factor, so proving who you are needs a real browser. Until this tool
+  // existed, an expired token could only be renewed by leaving the conversation for a terminal.
+  server.registerTool(
+    name("btp_login"),
+    {
+      title: "Sign in to SAP BTP in a browser",
+      description:
+        "Opens a browser for the one-time SAP BTP login of a destination and stores the refresh token it returns, so later calls renew themselves. " +
+        "Use it when a destination fails with an expired or missing refresh token. The destination must carry a serviceKeyPath. " +
+        "The call blocks until the login finishes in the browser, or until timeoutSeconds elapses. " +
+        "Set noBrowser to get the URL back instead, for a machine with no browser of its own.",
+      inputSchema: {
+        destination: z.string().describe("Name of the destination to sign in for, as list_btp_destinations reports it"),
+        noBrowser: z.boolean().default(false).describe("Do not open a browser; return the URL to open by hand (over SSH, or in a container)"),
+        timeoutSeconds: z.number().int().min(30).max(600).default(300).describe("How long to wait for the browser to come back")
+      },
+      outputSchema: btpLoginOutput,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
+    },
+    async (args) => {
+      try {
+        const all = loadDestinations(config);
+        const found = all.find((d) => d.name.toLowerCase() === args.destination.toLowerCase());
+        if (!found) {
+          throw new Error(`No destination called '${args.destination}'. Known: ${all.length ? all.map((d) => d.name).join(", ") : "(none)"}. ${DESTINATION_HINT}`);
+        }
+        if (!found.serviceKeyPath) {
+          throw new Error(`Destination '${found.name}' has no serviceKeyPath, so there is no OAuth client to sign in with.`);
+        }
+        const key = readServiceKeyFile(found.serviceKeyPath);
+
+        let url = "";
+        let identityProvider: string | undefined;
+        const result = await loginWithBrowser(key, {
+          noBrowser: args.noBrowser,
+          timeoutSeconds: args.timeoutSeconds,
+          onUrl: (u) => (url = u),
+          onIdentityProvider: (host) => (identityProvider = host)
+        });
+        const saved = saveRefreshToken(config.dataDir, found.name, result.refreshToken);
+
+        return json({
+          destination: found.name,
+          tokenUrl: key.tokenUrl,
+          identityProvider,
+          url,
+          sealed: saved.kind,
+          sealError: saved.sealError,
+          signedIn: true,
+          detail: saved.sealError
+            ? `Signed in. The refresh token is stored for '${found.name}', but DPAPI did not seal it: ${saved.sealError}`
+            : `Signed in. The refresh token is stored for '${found.name}' and later calls renew themselves.`
         });
       } catch (e) {
         return err(e);

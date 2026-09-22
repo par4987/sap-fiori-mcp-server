@@ -261,7 +261,7 @@ async function openToken(name) {
 
 async function tokAction(what) {
   if (!tokenFor) return;
-  const waiting = { validate: 'validando contra el tenant…', login: 'se ha abierto el navegador; termina el login ahí…', forget: 'borrando…' }[what];
+  const waiting = { validate: 'validando contra el tenant…', login: 'abriendo el navegador; termina el login ahí…', forget: 'borrando…' }[what];
   document.getElementById('tokBody').innerHTML = '<div class="result dim">' + waiting + '</div>';
   try {
     if (what === 'forget') {

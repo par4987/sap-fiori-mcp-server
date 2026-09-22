@@ -231,6 +231,7 @@ docker run -i --rm sap-fiori-mcp-server
 |---|---|
 | `list_btp_destinations` | Lista los destinations disponibles: locales (env/JSON/archivo/carpeta) y del **BTP Destination Service** en la nube. Secretos redactados. |
 | `get_btp_destination` | Detalles de un destination (URL, auth, sap-client, headers) con secretos redactados y preview de la autenticación resuelta. |
+| `btp_login` | Abre el navegador para el login único de BTP de un `destination` y guarda el refresh token, de modo que las llamadas posteriores se renuevan solas. Es el único paso que no puede resolverse desde un resultado de tool: BTP delega en un proveedor de identidad con SSO y segundo factor, así que hace falta un navegador de verdad. Antes solo existía en el panel y en `--btp-login`, y una tool que fallaba por token caducado solo sabía mandarte a un terminal. `noBrowser` devuelve la URL en vez de abrirla. |
 | `query_odata_data` | Ejecuta una query OData V2/V4 contra un entity set vía `destination` BTP, `systemName` de `list_sap_systems` o `serviceUrl` directa. Soporta `$filter`, `$top`, `$skip`, `$select`, `$orderby`, `$expand` y el total de filas (`$count` en V4, `$inlinecount` en V2). La versión se detecta sola: un servicio V2 rechaza `$count` sin nombrarlo —Gateway responde «Invalid system query option specified»— así que el reintento se decide por el código de estado, no por el texto. Es la contraparte remota de `query_cap_data`. |
 
 ## 🧭 Qué sale al generar una app (y qué se ha comprobado)
@@ -471,7 +472,7 @@ sap-fiori-mcp-server/
 │   ├── util/             # fs seguro, búsqueda TF-IDF, helpers XML
 │   └── docs/             # corpus documental integrado
 ├── examples/bookshop/    # Proyecto CAP demo (db + srv + datos CSV)
-├── test/                 # 236 tests (Vitest) con transport in-memory
+├── test/                 # 240 tests (Vitest) con transport in-memory
 ├── docs/AGENTS-rules.md  # Reglas para el modelo de IA
 ├── docs/NPM-PUBLISH.md   # Guía de publicación en npm
 ├── Dockerfile            # Multi-stage, node:22-alpine
@@ -483,7 +484,7 @@ sap-fiori-mcp-server/
 ```bash
 npm run build       # tsc → dist/
 npm run typecheck   # tsc --noEmit
-npm test            # vitest run (236 tests)
+npm test            # vitest run (240 tests)
 npm run test:watch  # vitest watch
 ```
 

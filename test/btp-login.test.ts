@@ -36,6 +36,31 @@ async function startLogin(over: Partial<Parameters<typeof loginWithBrowser>[1]> 
   return { authorizeUrl, callback: (query: string) => fetch(`http://127.0.0.1:${redirect.port}/callback?${query}`) };
 }
 
+describe("what happens before the browser opens", () => {
+  // Naming the identity provider costs a network round trip with a 10 s timeout. Doing it first
+  // held the browser back for that long while the panel already said it had opened.
+  it("hands over the URL without waiting for the identity provider lookup", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(
+      () => new Promise(() => undefined) // never settles: the lookup that used to block
+    );
+    try {
+      const t0 = Date.now();
+      const url = await new Promise<string>((resolve) => {
+        void loginWithBrowser(KEY, {
+          noBrowser: true,
+          timeoutSeconds: 10,
+          onIdentityProvider: () => undefined,
+          onUrl: resolve
+        }).catch(() => undefined);
+      });
+      expect(url).toContain("/oauth/authorize");
+      expect(Date.now() - t0).toBeLessThan(2000);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+});
+
 describe("the authorize request", () => {
   it("asks for a code with PKCE and a loopback redirect", async () => {
     const { authorizeUrl } = await startLogin();
