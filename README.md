@@ -472,7 +472,7 @@ sap-fiori-mcp-server/
 │   ├── util/             # fs seguro, búsqueda TF-IDF, helpers XML
 │   └── docs/             # corpus documental integrado
 ├── examples/bookshop/    # Proyecto CAP demo (db + srv + datos CSV)
-├── test/                 # 241 tests (Vitest) con transport in-memory
+├── test/                 # 243 tests (Vitest) con transport in-memory
 ├── docs/AGENTS-rules.md  # Reglas para el modelo de IA
 ├── docs/NPM-PUBLISH.md   # Guía de publicación en npm
 ├── Dockerfile            # Multi-stage, node:22-alpine
@@ -484,7 +484,7 @@ sap-fiori-mcp-server/
 ```bash
 npm run build       # tsc → dist/
 npm run typecheck   # tsc --noEmit
-npm test            # vitest run (241 tests)
+npm test            # vitest run (243 tests)
 npm run test:watch  # vitest watch
 ```
 

@@ -63,3 +63,48 @@ describe("annotation documents of a V2 service", () => {
     expect(await fetchAnnotationDocuments(BASE, SVC, {})).toEqual([]);
   });
 });
+
+// The request for each document carries this system's credentials, and the catalog response names
+// where the document lives. A response must not be able to send those credentials anywhere else.
+describe("where an annotation document is fetched from", () => {
+  const catalogPointingAt = (mediaSrc: string) =>
+    JSON.stringify({ d: { results: [{ TechnicalName: "ZANNO", __metadata: { media_src: mediaSrc } }] } });
+
+  it("never sends the credentials to a host the catalog names", async () => {
+    const seen: { url: string; auth?: string }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL, init?: RequestInit) => {
+        const u = String(url);
+        seen.push({ url: u, auth: (init?.headers as Record<string, string>)?.authorization });
+        return u.includes("CATALOGSERVICE") && u.includes("/Annotations?")
+          ? reply(catalogPointingAt("https://evil.example.net/steal/Annotations('ZANNO')/$value?x=1"), 200, true)
+          : reply(ANNOTATED);
+      })
+    );
+
+    const docs = await fetchAnnotationDocuments(BASE, SVC, { authorization: "Basic c2VjcmV0" });
+
+    expect(seen.some((s) => s.url.includes("evil.example.net"))).toBe(false);
+    for (const s of seen) expect(new URL(s.url).origin).toBe(BASE);
+    // the path survives, so a Gateway behind a proxy that advertises its internal host still works
+    expect(docs[0].url).toBe(`${BASE}/steal/Annotations('ZANNO')/$value?x=1`);
+  });
+
+  it("leaves an absolute URL on our own origin exactly as it was", async () => {
+    const own = `${BASE}/sap/opu/odata/IWFND/CATALOGSERVICE;v=2/Annotations('ZANNO')/$value`;
+    const seen: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL) => {
+        const u = String(url);
+        seen.push(u);
+        return u.includes("/Annotations?") ? reply(catalogPointingAt(own), 200, true) : reply(ANNOTATED);
+      })
+    );
+
+    const docs = await fetchAnnotationDocuments(BASE, SVC, {});
+    expect(seen[1]).toBe(own);
+    expect(docs[0].url).toBe(own);
+  });
+});

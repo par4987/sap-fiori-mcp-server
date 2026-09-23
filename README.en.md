@@ -233,7 +233,7 @@ Copy the rules from [`docs/AGENTS-rules.md`](./docs/AGENTS-rules.md) into your `
 ```bash
 npm run build       # tsc → dist/
 npm run typecheck   # tsc --noEmit
-npm test            # vitest run (241 tests)
+npm test            # vitest run (243 tests)
 ```
 
 **Server evaluation**: [`eval/evaluation.xml`](./eval/evaluation.xml) holds 10 read-only questions

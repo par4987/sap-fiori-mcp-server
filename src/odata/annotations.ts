@@ -34,6 +34,24 @@ interface CatalogAnnotationEntry {
 }
 
 /**
+ * Where to fetch one annotation document, always on the origin we were given.
+ *
+ * The catalog names each document's location, and the request for it carries this system's
+ * credentials. An absolute URL on another host would take those credentials wherever a network
+ * response pointed, so a foreign host keeps only its path, mounted on our origin. That is also the
+ * right answer for the ordinary case: a Gateway behind a Web Dispatcher advertises its internal
+ * host name, which the caller usually cannot even resolve.
+ */
+export function documentUrl(root: string, src: string): string {
+  if (!/^https?:\/\//i.test(src)) return `${root}/${src.replace(/^\//, "")}`;
+  const abs = new URL(src);
+  const origin = new URL(root).origin;
+  if (abs.origin === origin) return abs.toString();
+  logger.info("Annotation document advertised on another host; fetching its path from ours", { advertised: abs.origin, using: origin });
+  return `${origin}${abs.pathname}${abs.search}`;
+}
+
+/**
  * Every annotation document a V2 service declares, already fetched.
  *
  * Best effort by design: a system with no catalog, a service registered without annotations, or a
@@ -69,7 +87,7 @@ export async function fetchAnnotationDocuments(
   for (const entry of entries) {
     const src = entry.__metadata?.media_src ?? (entry.__metadata?.uri ? `${entry.__metadata.uri}/$value` : undefined);
     if (!src) continue;
-    const url = src.startsWith("http") ? src : `${root}/${src.replace(/^\//, "")}`;
+    const url = documentUrl(root, src);
     try {
       const res = await fetch(url, { headers: { ...headers, accept: "application/xml" }, signal: AbortSignal.timeout(timeoutMs) });
       if (!res.ok) continue;
