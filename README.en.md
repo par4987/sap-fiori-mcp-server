@@ -12,12 +12,14 @@ One binary that combines the capabilities of the three reference MCP servers of 
 | [`@ui5/mcp-server`](https://github.com/UI5/mcp-server) | UI5 scaffolding, integration cards, API reference, guidelines, manifest validation, linter |
 | [`@cap-js/mcp-server`](https://github.com/cap-js/mcp-server) | Fuzzy search over the CDS model, definition details, sample-data queries |
 | ➕ **SAP BTP** | Local destinations and the **BTP Destination Service**, remote OData V2/V4 queries (`query_odata_data`) |
+| ➕ **Deployment** | Publishing a generated app on its ABAP system — on premise or ABAP Environment on BTP (`deploy_fiori_app`) |
 
 > 📖 Documentación en español: [README.md](./README.md)
 
 ## Features
 
-- **26 MCP tools** for Claude Desktop, Claude Code, Cursor, VS Code (Copilot), Cline, Windsurf or any MCP client.
+- **28 MCP tools** for Claude Desktop, Claude Code, Cursor, VS Code (Copilot), Cline, Windsurf or any MCP client.
+- **Publishes the app it generates**: `deploy_fiori_app` validates, builds (`ui5 build`, or `webapp/` when the tooling is missing), archives and uploads the app to the ABAP system it belongs to — on premise or ABAP Environment on BTP — then opens the public URL to show it answers. One step, no confirmation: the app is only done when it responds.
 - **SAP BTP support**: destinations from env vars, files or the cloud **Destination Service** (automatic OAuth2, secrets always redacted).
 - **5 Fiori elements floorplans**: `list-report`, `object-page` (form entry), `worklist`, `analytical-list-page` (V2) and `overview-page` (V2).
 - **Apps that start, not just validate**: every variant (V4, V4 with parameters, worklist, V2 and CAP) has been opened in a browser against a real service. See [What a generated app does](#what-a-generated-app-does-and-what-was-verified).
@@ -111,7 +113,7 @@ docker run -p 3001:3001 -e SAP_FIORI_MCP_API_KEY=secret sap-fiori-mcp-server --h
 docker run -i --rm sap-fiori-mcp-server   # stdio
 ```
 
-## Available tools (26)
+## Available tools (28)
 
 **Docs & guidelines**: `search_docs` (scopes: fiori/ui5/cap/opa5/cards/typescript/btp), `get_guidelines`, `get_integration_cards_guidelines`, `get_typescript_conversion_guidelines`
 
@@ -122,6 +124,8 @@ docker run -i --rm sap-fiori-mcp-server   # stdio
 **CAP**: `search_model` (fuzzy over parsed .cds definitions), `get_cap_details` (elements, keys, associations, actions, annotations, service exposure), `query_cap_data` (CQN-like queries over `db/data/*.csv`: columns, and/or filters, eq/ne/gt/ge/lt/le, contains, order, skip/limit)
 
 **SAP BTP**: `list_btp_destinations` (local + Destination Service, redacted), `get_btp_destination` (details + resolved auth preview), `btp_login` (opens the browser for the one-time BTP login of a destination and stores the refresh token; returns `pending` with the URL, since a login takes longer than the 60 s a client waits for a tool call — call it again to collect the outcome), `query_odata_data` (remote OData V2/V4 queries with $filter/$top/$skip/$select/$orderby/$expand/$count via destination, system or URL)
+
+**Deployment**: `deploy_fiori_app` — validate → build → upload → verify, with no confirmation step. It archives the app (`ui5 build`, or `webapp/` when `@ui5/cli` is not installed) and POSTs/PUTs it to `UI5/ABAP_REPOSITORY_SRV`, the same protocol on-premise S/4 and ABAP Environment on BTP speak. The target is read back from the service URL already written into the manifest (`systemName`/`destination` override it); the BSP name is sanitised to what ABAP accepts (≤15 chars), the app goes to package `$TMP` unless `package` says otherwise, and `index.html`'s bootstrap is rewritten to `ui5.sap.com` — or to the system's own resources with `bootstrap: "local"` — because `resources/sap-ui-core.js` would 404 behind `/sap/bc/ui5_ui5/sap/<bsp>/`. `ok: true` means the public URL answered HTTP 200.
 
 ## What a generated app does, and what was verified
 
@@ -161,6 +165,10 @@ ask for the parameters before loading anything.
 - **`overview-page` is a scaffold**: it starts and shows card placeholders, but the cards do not bind
   to data. Describe them in `sap.ovp/cards` with their `annotationPath` first. The warning says so at
   generation time.
+- **Deployment needs the system's authorisation**: `deploy_fiori_app` requires write access to
+  `UI5/ABAP_REPOSITORY_SRV`. Without it the system answers 403
+  (`/IWFND/CM_CONSUMER/101 No authorization to access Service`) and the tool reports exactly that as
+  an error, never as success. Ask the administrator (SU53 shows why the last attempt was rejected).
 
 ## Connection admin panel
 
@@ -208,7 +216,7 @@ Self-signed certificates: set `NODE_EXTRA_CA_CERTS=/path/ca.crt` (recommended) o
 
 1. **Local destinations** — one JSON file per destination in `~/.sap-fiori-mcp/destinations/` (or `SAP_DESTINATIONS_JSON` inline). Cockpit export format (`Name`, `URL`, `Authentication`, `User`, `Password`, `sap-client`) or camelCase. OAuth2 destinations exchange tokens automatically per request.
 2. **BTP Destination Service** — set `BTP_CLIENT_ID`, `BTP_CLIENT_SECRET`, `BTP_TOKEN_URL`, `BTP_DESTINATION_API_URL` (or provide `VCAP_SERVICES` with `destination` + `xsuaa` bindings). Pre-exchanged `authTokens` returned by the service are applied verbatim, so OAuth2/On-Premise destinations work without exposing secrets.
-3. **Typical AI flow** — `list_btp_destinations` → `get_btp_destination` (verify auth) → `query_odata_data` (validate data) → `download_odata_service_metadata` → `generate_fiori_app_odata`.
+3. **Typical AI flow** — `list_btp_destinations` → `get_btp_destination` (verify auth) → `query_odata_data` (validate data) → `download_odata_service_metadata` → `generate_fiori_app_odata` → `deploy_fiori_app`.
 
 Secrets (passwords, client secrets, tokens) **never** appear in tool responses.
 

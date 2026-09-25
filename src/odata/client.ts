@@ -16,6 +16,11 @@ export interface ODataRequestOptions {
   config?: AppConfig;
   /** Explicitly configured URLs (destination/system) that the allowlist must not block. */
   trustedUrls?: string[];
+  /**
+   * Where to fetch the CSRF token from, when `csrf` is set. Defaults to the request URL; a caller
+   * uploading an entity passes the service's `$metadata`, which always answers a GET.
+   */
+  csrfUrl?: string;
 }
 
 export interface ODataResponse {
@@ -49,11 +54,21 @@ export async function odataRequest(opts: ODataRequestOptions): Promise<ODataResp
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 30000);
   try {
-    let csrfToken: string | null = null;
     if (opts.csrf) {
-      const probe = await fetch(opts.url, { method: "HEAD", headers: { ...headers, "x-csrf-token": "fetch" }, signal: controller.signal });
-      csrfToken = probe.headers.get("x-csrf-token");
-      if (csrfToken) headers["x-csrf-token"] = csrfToken;
+      // IWFND issues the token against the session that asked for it, so the token alone is not
+      // enough: the session cookie has to travel with it, or the upload is rejected as a forgery
+      // with "CSRF token validation failed". The probe body is discarded — only the headers count.
+      const probe = await fetch(opts.csrfUrl ?? opts.url, {
+        method: "GET",
+        headers: { ...headers, "x-csrf-token": "fetch" },
+        signal: controller.signal
+      });
+      const token = probe.headers.get("x-csrf-token");
+      const getSetCookie = (probe.headers as Headers & { getSetCookie?: () => string[] }).getSetCookie;
+      const cookies = typeof getSetCookie === "function" ? getSetCookie.call(probe.headers) : [];
+      if (cookies.length) headers.cookie = cookies.map((c) => c.split(";")[0]).join("; ");
+      if (token) headers["x-csrf-token"] = token;
+      await probe.arrayBuffer().catch(() => undefined);
     }
     const res = await fetch(opts.url, {
       method: opts.method ?? "GET",
@@ -67,7 +82,10 @@ export async function odataRequest(opts: ODataRequestOptions): Promise<ODataResp
     const text = await res.text();
     let json: unknown;
     try {
-      json = JSON.parse(text);
+      // ABAP answers with a UTF-8 BOM (and sometimes stray padding) often enough that parsing the
+      // raw body loses every structured error the service bothered to send
+      const body = text.replace(/^\uFEFF/, "").trim();
+      json = JSON.parse(body);
     } catch {
       json = undefined;
     }

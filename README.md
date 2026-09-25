@@ -19,7 +19,8 @@ Un único binario que combina las capacidades de los tres servidores MCP de refe
 
 ## ✨ Características
 
-- **26 tools MCP** listas para usar con Claude Desktop, Claude Code, Cursor, VS Code (Copilot), Cline, Windsurf o cualquier cliente MCP.
+- **28 tools MCP** listas para usar con Claude Desktop, Claude Code, Cursor, VS Code (Copilot), Cline, Windsurf o cualquier cliente MCP.
+- **Publica la app que genera**: `deploy_fiori_app` valida, compila (`ui5 build`, o `webapp/` cuando no está el tooling), archiva y sube la app al sistema ABAP que le corresponde —on-premise o ABAP Environment en BTP— y termina abriendo la URL pública para comprobar que responde. Un solo paso, sin confirmación: la app solo está hecha cuando contesta.
 - **Soporte SAP BTP**: destinations desde variables de entorno, archivos o del **Destination Service** en la nube (OAuth2 automático, secretos siempre redactados).
 - **5 floorplans Fiori elements**: `list-report`, `object-page` (form entry), `worklist`, `analytical-list-page` (V2) y `overview-page` (V2).
 - **Apps que arrancan, no solo que validan**: cada variante (V4, V4 con parámetros, worklist, V2 y CAP) se ha abierto en un navegador contra un servicio real. Ver [Qué sale al generar una app](#-qué-sale-al-generar-una-app-y-qué-se-ha-comprobado).
@@ -180,7 +181,7 @@ docker run -p 3001:3001 -e SAP_FIORI_MCP_API_KEY=secreto sap-fiori-mcp-server --
 docker run -i --rm sap-fiori-mcp-server
 ```
 
-## 🧰 Tools disponibles (26)
+## 🧰 Tools disponibles (28)
 
 ### Documentación y guías
 
@@ -234,6 +235,12 @@ docker run -i --rm sap-fiori-mcp-server
 | `btp_login` | Abre el navegador para el login único de BTP de un `destination` y guarda el refresh token, de modo que las llamadas posteriores se renuevan solas. Es el único paso que no puede resolverse desde un resultado de tool: BTP delega en un proveedor de identidad con SSO y segundo factor, así que hace falta un navegador de verdad. Antes solo existía en el panel y en `--btp-login`, y una tool que fallaba por token caducado solo sabía mandarte a un terminal. Un cliente MCP abandona una tool call a los 60 s y un login con SSO y segundo factor no cabe ahí, así que la llamada devuelve `pending: true` con la URL en cuanto el navegador está abierto: terminás el login y **volvés a llamarla** para recoger el resultado. `noBrowser` devuelve la URL en vez de abrirla. |
 | `query_odata_data` | Ejecuta una query OData V2/V4 contra un entity set vía `destination` BTP, `systemName` de `list_sap_systems` o `serviceUrl` directa. Soporta `$filter`, `$top`, `$skip`, `$select`, `$orderby`, `$expand` y el total de filas (`$count` en V4, `$inlinecount` en V2). La versión se detecta sola: un servicio V2 rechaza `$count` sin nombrarlo —Gateway responde «Invalid system query option specified»— así que el reintento se decide por el código de estado, no por el texto. Es la contraparte remota de `query_cap_data`. |
 
+### Despliegue (publicación en el sistema ABAP)
+
+| Tool | Descripción |
+|---|---|
+| `deploy_fiori_app` | **Valida → compila → sube → verifica**, sin paso intermedio de confirmación. Toma `appPath` (la carpeta generada) y sube el zip al servicio `UI5/ABAP_REPOSITORY_SRV` (`POST /Repositories` para crear, `PUT /Repositories('<BSP>')` para actualizar), que es el mismo protocolo en S/4 on-premise y en ABAP Environment de BTP. El destino se deduce de la URL del servicio que ya está escrita en el manifest; `systemName` o `destination` lo imponen. El nombre del BSP se sanea solo (≤15 caracteres, guiones → `_`), la app va al paquete `$TMP` salvo que `package` diga lo contrario (entonces hace falta `transport`), y `index.html` reescribe el bootstrap a `ui5.sap.com` —o a los recursos del propio sistema con `bootstrap: "local"`— porque `resources/sap-ui-core.js` tal cual queda en 404 detrás de `/sap/bc/ui5_ui5/sap/<bsp>/`. Compila con `ui5 build` si el proyecto tiene `@ui5/cli` —instalándolo si falta `node_modules`— y si algo falla sube `webapp/` en vez de cortar, con el motivo en `warnings`. Termina con `GET` de la URL pública (`/sap/bc/ui5_ui5/sap/<bsp>`): `ok: true` solo si la app contesta 200. El mensaje del sistema (`sap-message`) viaja en la respuesta y los errores de autorización se reportan como tales, no como éxito. |
+
 ## 🧭 Qué sale al generar una app (y qué se ha comprobado)
 
 Las apps generadas se han **ejecutado en un navegador** contra servicios reales, no solo validado.
@@ -273,6 +280,10 @@ hace que sap.fe pida los parámetros antes de cargar nada.
 - **`overview-page` es un andamio**: arranca y pinta los marcos de las tarjetas, pero las tarjetas no
   enlazan a datos. Descríbelas en `sap.ovp/cards` con su `annotationPath` antes de usarla. El aviso
   lo dice al generar.
+- **Despliegue sujeto a autorización del sistema**: `deploy_fiori_app` necesita permiso de escritura en
+  `UI5/ABAP_REPOSITORY_SRV`. Sin él el sistema responde 403
+  (`/IWFND/CM_CONSUMER/101 No authorization to access Service`) y la tool lo devuelve como error con esa
+  misma frase, nunca como éxito. Pídeselo al administrador (SU53 deja el motivo del último intento).
 
 ## 🖥️ Panel de conexiones
 
@@ -431,6 +442,7 @@ Si el Destination Service devuelve tokens pre-intercambiados (`authTokens`), se 
 ```
 list_btp_destinations → get_btp_destination (verificar auth) → query_odata_data (validar datos)
 → download_odata_service_metadata (destination + servicePath) → generate_fiori_app_odata
+→ deploy_fiori_app
 ```
 
 Los secretos (password, clientSecret, tokens) **nunca** aparecen en las respuestas de las tools.

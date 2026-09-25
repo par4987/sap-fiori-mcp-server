@@ -60,7 +60,7 @@ describe("tool contract", () => {
     await close();
   });
 
-  it("scaffolding tools are the ones marked as writing", async () => {
+  it("writing tools are the ones declared as writing", async () => {
     const { client, close } = await connect();
     const { tools } = await client.listTools();
     const writing = tools.filter((t) => !t.annotations?.readOnlyHint).map((t) => t.name).sort();
@@ -69,6 +69,7 @@ describe("tool contract", () => {
         "btp_login", // not scaffolding, but it writes a refresh token to disk
         "create_integration_card",
         "create_ui5_app",
+        "deploy_fiori_app", // writes into an ABAP system, not into this machine
         "download_odata_service_metadata",
         "execute_functionality",
         "generate_fiori_app_cap",

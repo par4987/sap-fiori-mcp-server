@@ -128,6 +128,57 @@ export const executeFunctionalityOutput = {
   message: z.string()
 };
 
+// --- deploy -----------------------------------------------------------------
+
+export const deployAppOutput = {
+  ok: z.boolean().describe("True when the application answers HTTP 200 on its public URL"),
+  stage: z
+    .enum(["resolve-target", "validate", "build", "archive", "deploy", "verify"])
+    .describe("Where the flow stopped; only meaningful alongside ok=false"),
+  target: loose({
+    source: z.string().describe("system:<name> or destination:<name>"),
+    kind: z.enum(["system", "destination"]),
+    name: z.string(),
+    url: z.string().describe("Root of the UI5 Repository service that received the archive"),
+    inferred: z.boolean().describe("True when the target was read from the manifest instead of passed in")
+  }),
+  bsp: loose({
+    name: z.string(),
+    adjustedFrom: z.string().optional().describe("Requested name before sanitising, when it had to change"),
+    package: z.string(),
+    transport: z.string().optional(),
+    description: z.string()
+  }),
+  action: z.enum(["created", "updated", "none"]).describe("Whether the repository entry was new"),
+  httpStatus: z.number(),
+  appUrl: z.string().describe("Public URL the application is served on"),
+  build: loose({
+    mode: z.enum(["dist", "source"]),
+    built: z.boolean(),
+    durationMs: z.number(),
+    root: z.string().describe("Folder that was archived")
+  }),
+  archive: loose({ bytes: z.number(), files: z.number() }),
+  bootstrap: loose({
+    mode: z.string(),
+    from: z.string().optional(),
+    to: z.string().optional(),
+    changed: z.boolean(),
+    checked: z.boolean().optional(),
+    checkedOk: z.boolean().optional()
+  }),
+  verification: loose({
+    attempted: z.boolean(),
+    ok: z.boolean(),
+    status: z.number().optional(),
+    contentType: z.string().optional(),
+    note: z.string().optional()
+  }),
+  sapMessage: z.string().optional().describe("The system's own message about the upload"),
+  warnings: z.array(z.string()),
+  nextSteps: z.array(z.string())
+};
+
 // --- ui5 --------------------------------------------------------------------
 
 export const scaffoldOutput = {

@@ -19,7 +19,7 @@ beforeAll(() => {
 });
 
 describe("createMcpServer", () => {
-  it("exposes all 26 tools over an in-memory transport", async () => {
+  it("exposes the full tool set over an in-memory transport", async () => {
     const server = createMcpServer(config);
     const client = new Client({ name: "test-client", version: "1.0.0" });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -36,7 +36,8 @@ describe("createMcpServer", () => {
       "create_ui5_app", "create_integration_card", "get_api_reference", "get_project_info", "get_version_info",
       "run_manifest_validation", "run_ui5_linter",
       "search_model", "get_cap_details", "query_cap_data",
-      "list_btp_destinations", "get_btp_destination", "query_odata_data"
+      "list_btp_destinations", "get_btp_destination", "query_odata_data",
+      "deploy_fiori_app"
     ].sort();
     for (const name of expected) {
       expect(names).toContain(name);

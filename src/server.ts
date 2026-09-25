@@ -6,6 +6,7 @@ import { registerFioriTools } from "./tools/fiori.tools.js";
 import { registerUi5Tools } from "./tools/ui5.tools.js";
 import { registerCapTools } from "./tools/cap.tools.js";
 import { registerBtpTools } from "./tools/btp.tools.js";
+import { registerDeployTools } from "./tools/deploy.tools.js";
 import { fullCorpus } from "./docs/index.js";
 
 export const SERVER_INSTRUCTIONS = `@pired/sap-fiori-mcp-server unifies three SAP development toolsets plus SAP BTP connectivity:
@@ -19,6 +20,9 @@ export const SERVER_INSTRUCTIONS = `@pired/sap-fiori-mcp-server unifies three SA
    query_cap_data (CSV sample data queries).
 4. BTP: list_btp_destinations, get_btp_destination, query_odata_data — call remote OData services (V2/V4) through
    SAP BTP destinations (local env/file/dir or the BTP Destination Service), or via list_sap_systems / plain URLs.
+5. DEPLOY: deploy_fiori_app publishes an app that has already been generated — validate → build → upload → verify — on the
+   ABAP system it belongs to (on premise or ABAP Environment on BTP), with no confirmation step. After generating an app,
+   deploy it: the app is only done when it answers on its own URL.
 Rules: Always call search_docs/search_model before creating or modifying CDS models or Fiori elements apps.
 Provide absolute paths for appPath/projectPath arguments. Data models for Fiori elements need one main entity
 plus associations; use UUID primary keys and UUID foreign keys in CSV sample data.
@@ -51,6 +55,7 @@ export function createMcpServer(config: AppConfig): McpServer {
   registerUi5Tools(server, config, name);
   registerCapTools(server, config, name);
   registerBtpTools(server, config, name);
+  registerDeployTools(server, config, name);
 
   // resource: read bundled docs entries as resources (skipped when noResources)
   if (!config.noResources) {
