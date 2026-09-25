@@ -25,8 +25,10 @@ export function registerDeployTools(
         "public URL to show the app really answers. It publishes: there is no confirmation step, and SafeMode on the system keeps " +
         "it from touching applications that are not yours. The target defaults to the system the app was generated against, read " +
         "back from the manifest service URL; pass systemName (list_sap_systems) or destination (list_btp_destinations) to deploy " +
-        "somewhere else. The application goes into package $TMP (local, no transport) unless `package` says otherwise; a real " +
-        "package also needs `transport`. Run run_manifest_validation first if you want validation alone.",
+        "somewhere else. The application goes into package $TMP (local, no transport) unless `package` says otherwise; when the " +
+        "system refuses that default — as ABAP Environment does — it finds or creates a package the system accepts, under the " +
+        "customer software component, and uploads again on its own. A package that records changes also needs `transport`. " +
+        "Run run_manifest_validation first if you want validation alone.",
       inputSchema: {
         appPath: z
           .string()
@@ -46,7 +48,7 @@ export function registerDeployTools(
         package: z
           .string()
           .optional()
-          .describe("ABAP package to record the application in. Default $TMP: local objects, no transport request"),
+          .describe("ABAP package to record the application in. Default $TMP (local, no transport); a package the system accepts is found automatically when $TMP is refused"),
         transport: z
           .string()
           .optional()

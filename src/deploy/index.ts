@@ -17,6 +17,7 @@ import { loadDestinations, resolveODataTarget, type ODataTarget } from "../btp/d
 import { readAppManifest } from "../fiori/apps.js";
 import { buildApp, projectRootOf, type BuildOutcome } from "./build.js";
 import { zipFolder } from "./zip.js";
+import { looksLikePackageRefusal, resolveWritablePackage } from "./package.js";
 import {
   DESCRIPTION_MAX,
   LOCAL_RESOURCE_ROOTS,
@@ -38,7 +39,8 @@ export interface DeployParams {
   /** System configured with list_sap_systems (overrides inference). */
   systemName?: string;
   bspName?: string;
-  /** ABAP package to record the application in. `$TMP` keeps it local and transport-free. */
+  /** ABAP package to record the application in. Defaults to `$TMP`, falling back to a package the
+   *  system accepts when that one is refused — pass it to choose the destination yourself. */
   abapPackage?: string;
   /** Transport request number. Required by real packages, never by `$TMP`, `L*` or `T*`. */
   transport?: string;
@@ -265,7 +267,8 @@ export async function deployFioriApp(params: DeployParams): Promise<DeployResult
   warnings.push(...bsp.warnings);
   if (bsp.adjustedFrom) warnings.push(`BSP name adjusted from '${bsp.adjustedFrom}' to '${bsp.name}'.`);
 
-  const abapPackage = params.abapPackage?.trim() || "$TMP";
+  const packageExplicit = Boolean(params.abapPackage?.trim());
+  let abapPackage = params.abapPackage?.trim() || "$TMP";
   const description = params.description?.trim() || descriptionFor(manifest, webappDir, appFolderName);
 
   const base: Omit<DeployResult, "action" | "httpStatus" | "ok" | "verification" | "archive" | "appUrl" | "sapMessage" | "build" | "bootstrap"> = {
@@ -345,6 +348,13 @@ export async function deployFioriApp(params: DeployParams): Promise<DeployResult
     );
   }
   const exists = info.status === 200;
+  // An application that is already there keeps the package it was created in: resending `$TMP`
+  // would at best be refused, and at worst move the repository out of where it lives.
+  if (exists && !packageExplicit) {
+    const known = (info.json as { d?: { Package?: unknown } } | undefined)?.d?.Package;
+    if (typeof known === "string" && known.trim()) abapPackage = known.trim();
+  }
+  base.bsp.package = abapPackage;
 
   // --- upload ---------------------------------------------------------------
   const serviceRoot = target.url.replace(/\/$/, "");
@@ -354,30 +364,64 @@ export async function deployFioriApp(params: DeployParams): Promise<DeployResult
   const query = [`CodePage='UTF8'`, "CondenseMessagesInHttpResponseHeader=X", "format=json"];
   if (params.transport) query.push(`TransportRequest=${encodeURIComponent(params.transport)}`);
   const uploadUrl = exists ? `${serviceRoot}/Repositories('${bsp.name}')` : `${serviceRoot}/Repositories`;
-  const body = repositoryPayload({ serviceUrl: serviceRoot, name: bsp.name, description, abapPackage, zip: buffer });
+  const sendUpload = () =>
+    odataRequest({
+      url: `${uploadUrl}?${query.join("&")}`,
+      method: exists ? "PUT" : "POST",
+      system: target.system,
+      headers: { ...target.headers, "content-type": "application/atom+xml; type=entry; charset=UTF8" },
+      body: repositoryPayload({ serviceUrl: serviceRoot, name: bsp.name, description, abapPackage, zip: buffer }),
+      // the repository service validates the token (and the session it was minted in) on every write
+      csrf: true,
+      csrfUrl: `${serviceRoot}/$metadata`,
+      accept: "application/json,application/xml",
+      timeoutMs: timeout,
+      config,
+      trustedUrls: target.trustedUrls
+    });
 
-  const upload = await odataRequest({
-    url: `${uploadUrl}?${query.join("&")}`,
-    method: exists ? "PUT" : "POST",
-    system: target.system,
-    headers: { ...target.headers, "content-type": "application/atom+xml; type=entry; charset=UTF8" },
-    body,
-    // the repository service validates the token (and the session it was minted in) on every write
-    csrf: true,
-    csrfUrl: `${serviceRoot}/$metadata`,
-    accept: "application/json,application/xml",
-    timeoutMs: timeout,
-    config,
-    trustedUrls: target.trustedUrls
-  });
-  const sapMessage = upload.headers["sap-message"];
-  if (upload.status < 200 || upload.status >= 300) {
+  let upload = await sendUpload();
+  let sapMessage = upload.headers["sap-message"];
+  let refusal = upload.status < 200 || upload.status >= 300 ? uploadErrorDetail(upload, sapMessage) : "";
+
+  // An ABAP Environment instance refuses `$TMP` with a sentence that reads like a missing
+  // authorization. Recover instead of reporting a problem the caller cannot act on: find a package
+  // the system does accept (creating it under the customer software component if it has to) and
+  // upload again. Explicitly asked-for packages are never second-guessed.
+  if (refusal && !packageExplicit && !exists && looksLikePackageRefusal(`${sapMessage ?? ""}\n${refusal}`)) {
+    try {
+      const choice = await resolveWritablePackage({
+        target,
+        config,
+        preferredName: bsp.name,
+        timeoutMs: timeout,
+        allowChangeRecording: Boolean(params.transport)
+      });
+      warnings.push(
+        `The system refused package '${abapPackage}' (${refusal.split("\n")[0]}). Deploying into '${choice.name}'` +
+          `${choice.source === "created" ? ", created for this application" : choice.source === "root" ? ", the software component's own package" : ""} instead.`
+      );
+      logger.warn("deploy: package refused, recovering", { refused: abapPackage, using: choice.name, source: choice.source });
+      abapPackage = choice.name;
+      base.bsp.package = abapPackage;
+      upload = await sendUpload();
+      sapMessage = upload.headers["sap-message"];
+      refusal = upload.status < 200 || upload.status >= 300 ? uploadErrorDetail(upload, sapMessage) : "";
+    } catch (e) {
+      throw new Error(
+        `Upload of '${bsp.name}' failed (HTTP ${upload.status}): ${refusal}\n` +
+          `Recovering into another package failed as well: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+  }
+
+  if (refusal) {
     throw new Error(
-      `Upload of '${bsp.name}' failed (HTTP ${upload.status}). ${uploadErrorDetail(upload, sapMessage)}` +
+      `Upload of '${bsp.name}' failed (HTTP ${upload.status})${packageExplicit ? "" : ` into package '${abapPackage}'`}. ${refusal}` +
         (params.transport ? "" : " If the package is not local ($TMP), pass a transport request in `transport`.")
     );
   }
-  logger.info("deploy: repository upload", { name: bsp.name, status: upload.status, exists, source: target.source });
+  logger.info("deploy: repository upload", { name: bsp.name, status: upload.status, exists, source: target.source, package: abapPackage });
 
   // --- verify ---------------------------------------------------------------
   const appUrl = frontendAppUrl(target.trustedUrls[0] ?? target.url, bsp.name, target.system?.client);

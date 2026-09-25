@@ -22,7 +22,8 @@ export const SERVER_INSTRUCTIONS = `@pired/sap-fiori-mcp-server unifies three SA
    SAP BTP destinations (local env/file/dir or the BTP Destination Service), or via list_sap_systems / plain URLs.
 5. DEPLOY: deploy_fiori_app publishes an app that has already been generated — validate → build → upload → verify — on the
    ABAP system it belongs to (on premise or ABAP Environment on BTP), with no confirmation step. After generating an app,
-   deploy it: the app is only done when it answers on its own URL.
+   deploy it: the app is only done when it answers on its own URL. The package defaults to $TMP and, when the system
+   refuses it, an accepted package is found or created without asking.
 Rules: Always call search_docs/search_model before creating or modifying CDS models or Fiori elements apps.
 Provide absolute paths for appPath/projectPath arguments. Data models for Fiori elements need one main entity
 plus associations; use UUID primary keys and UUID foreign keys in CSV sample data.

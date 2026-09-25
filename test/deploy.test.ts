@@ -16,6 +16,7 @@ import {
   validateBspName
 } from "../src/deploy/bsp.js";
 import { deployFioriApp, inferTarget } from "../src/deploy/index.js";
+import { candidatePackageName, looksLikePackageRefusal, packageCreatePayload } from "../src/deploy/package.js";
 import { buildApp, projectRootOf, resolveUi5Cli } from "../src/deploy/build.js";
 import { zipFolder } from "../src/deploy/zip.js";
 import { feComponentJs, feIndexHtml, feManifest, feUi5Yaml } from "../src/fiori/templates.js";
@@ -482,5 +483,354 @@ describe("deploy_fiori_app against an ABAP system", () => {
       deployFioriApp({ config: isolated, appPath: app, install: false, bootstrapCheck: false })
     ).rejects.toThrow(/Pass systemName/);
     fs.rmSync(isolated.dataDir, { recursive: true, force: true });
+  });
+});
+
+// --- package recovery --------------------------------------------------------------------------
+
+/**
+ * A system that speaks both protocols the flow needs: the UI5 repository (OData) and the package
+ * infrastructure behind it (ADT). Enough of each to reproduce what ABAP Environment does — refuse
+ * `$TMP`, then offer the customer software component a package can hang from.
+ */
+interface MockSystemOptions {
+  /** Software components ADT lists (default: the local development one). `null` = no ADT at all. */
+  components?: string[] | null;
+  /** Packages whose upload is refused, like `$TMP` is on ABAP Environment. */
+  refusePackages?: string[];
+  /** Packages that already exist, name → software component. */
+  packages?: Record<string, string>;
+}
+
+interface MockSystem {
+  origin: string;
+  requests: MockRequest[];
+  close: () => Promise<void>;
+}
+
+const NAMED_ITEMS_TYPE = "application/vnd.sap.adt.nameditems.v1+xml";
+const PACKAGE_TYPE = "application/vnd.sap.adt.packages.v2+xml";
+
+async function startMockSystem(opts: MockSystemOptions = {}): Promise<MockSystem> {
+  const requests: MockRequest[] = [];
+  const packages: Record<string, string> = { ZLOCAL: "ZLOCAL", ...(opts.packages ?? {}) };
+  const refuse = opts.refusePackages ?? ["$TMP"];
+  const components = opts.components === undefined ? ["ZLOCAL"] : opts.components;
+  let repositoryPackage: string | null = null;
+
+  const packageXml = (name: string, softwareComponent: string) =>
+    `<?xml version="1.0" encoding="utf-8"?>` +
+    `<pak:package xmlns:pak="http://www.sap.com/adt/packages" xmlns:adtcore="http://www.sap.com/adt/core" ` +
+    `adtcore:name="${name}" adtcore:type="DEVC/K" adtcore:description="${name}">` +
+    `<pak:attributes pak:packageType="development" pak:isAddingObjectsAllowed="true" pak:recordChanges="false"/>` +
+    `<pak:superPackage/>` +
+    `<pak:applicationComponent pak:name=""/>` +
+    `<pak:transport><pak:softwareComponent pak:name="${softwareComponent}"/><pak:transportLayer pak:name=""/></pak:transport>` +
+    `</pak:package>`;
+
+  const server = http.createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", () => {
+      const url = req.url ?? "";
+      const pathOnly = url.split("?")[0];
+      const body = Buffer.concat(chunks).toString("utf8");
+      requests.push({ method: req.method ?? "", url, body, headers: req.headers });
+      const tokenHeaders = {
+        "content-type": "application/xml;charset=utf-8",
+        "x-csrf-token": "TOKEN-123",
+        "set-cookie": "SAP_SESSIONID_ABC=xyz; Path=/; HttpOnly"
+      };
+
+      // the token handshake, for both protocols
+      if (req.method === "GET" && (pathOnly.endsWith("/$metadata") || pathOnly === "/sap/bc/adt/discovery")) {
+        res.writeHead(200, tokenHeaders);
+        res.end("<edmx:Edmx/>");
+        return;
+      }
+
+      // --- ADT: software components ------------------------------------------------------------
+      if (pathOnly.startsWith("/sap/bc/adt/packages/valuehelps/softwarecomponents")) {
+        if (components === null) {
+          res.writeHead(404, { "content-type": "text/plain" });
+          res.end("not found");
+          return;
+        }
+        const pattern = /[?&]name=([^&]*)/.exec(url)?.[1] ?? "";
+        const names = pattern.startsWith("Z")
+          ? components.filter((c) => c.startsWith("Z"))
+          : pattern.startsWith("Y")
+            ? components.filter((c) => c.startsWith("Y"))
+            : components;
+        const feed =
+          `<?xml version="1.0" encoding="utf-8"?>` +
+          `<nameditem:namedItemList xmlns:nameditem="http://www.sap.com/adt/nameditem">` +
+          `<nameditem:totalItemCount>${names.length}</nameditem:totalItemCount>` +
+          names.map((n) => `<nameditem:namedItem><nameditem:name>${n}</nameditem:name><nameditem:description/></nameditem:namedItem>`).join("") +
+          `</nameditem:namedItemList>`;
+        res.writeHead(200, { "content-type": NAMED_ITEMS_TYPE });
+        res.end(feed);
+        return;
+      }
+
+      // --- ADT: constraints (does a package here need a transport?) ----------------------------
+      if (pathOnly === "/sap/bc/adt/packages/$constraints") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ changeRecording: { value: false }, packageTypes: { values: ["development"] } }));
+        return;
+      }
+
+      // --- ADT: read a package ------------------------------------------------------------------
+      if (req.method === "GET" && pathOnly.startsWith("/sap/bc/adt/packages/")) {
+        const name = decodeURIComponent(pathOnly.slice("/sap/bc/adt/packages/".length));
+        const softwareComponent = packages[name];
+        if (!softwareComponent) {
+          res.writeHead(404, { "content-type": "application/xml" });
+          res.end(
+            `<?xml version="1.0" encoding="utf-8"?><exc:exception xmlns:exc="http://www.sap.com/abapxml/types/communicationframework">` +
+              `<message lang="EN">Error while importing object ${name} from the database</message></exc:exception>`
+          );
+          return;
+        }
+        res.writeHead(200, { "content-type": PACKAGE_TYPE });
+        res.end(packageXml(name, softwareComponent));
+        return;
+      }
+
+      // --- ADT: create a package ----------------------------------------------------------------
+      if (req.method === "POST" && pathOnly === "/sap/bc/adt/packages") {
+        if (components === null) {
+          res.writeHead(404, { "content-type": "text/plain" });
+          res.end("not found");
+          return;
+        }
+        const name = /<pak:package[^>]*adtcore:name="([^"]*)"/.exec(body)?.[1] ?? "";
+        const softwareComponent = /<pak:softwareComponent[^>]*pak:name="([^"]*)"/.exec(body)?.[1] ?? "";
+        if (!name || !softwareComponent) {
+          res.writeHead(400, { "content-type": "application/xml" });
+          res.end(`<?xml version="1.0"?><exc:exception><message lang="EN">System expected the element 'superPackage'</message></exc:exception>`);
+          return;
+        }
+        packages[name] = softwareComponent;
+        res.writeHead(201, { "content-type": PACKAGE_TYPE });
+        res.end(packageXml(name, softwareComponent));
+        return;
+      }
+
+      // --- the UI5 repository service ------------------------------------------------------------
+      if (req.method === "GET" && pathOnly.startsWith("/sap/opu/odata/UI5/ABAP_REPOSITORY_SRV/Repositories(")) {
+        if (repositoryPackage) {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ d: { Name: "ZDEPLOYED_APP", Package: repositoryPackage } }));
+        } else {
+          res.writeHead(404, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: { code: "not_found", message: { value: "not deployed" } } }));
+        }
+        return;
+      }
+      const csrfBroken =
+        req.headers["x-csrf-token"] !== "TOKEN-123" || !/SAP_SESSIONID_ABC=xyz/.test(req.headers.cookie ?? "");
+      if ((req.method === "POST" || req.method === "PUT") && pathOnly.includes("/Repositories") && csrfBroken) {
+        res.writeHead(403, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: { code: "CSRF", message: { value: "CSRF token validation failed" } } }));
+        return;
+      }
+      if (req.method === "POST" && url.includes("/Repositories?")) {
+        const sent = /<d:Package>([^<]*)<\/d:Package>/.exec(body)?.[1] ?? "";
+        if (refuse.includes(sent)) {
+          res.writeHead(400, {
+            "content-type": "application/json",
+            "sap-message": JSON.stringify({ code: "/UI5/UI5_REP_LOAD/003", message: "You are not authorized to create" })
+          });
+          res.end(
+            JSON.stringify({
+              error: {
+                code: "/UI5/UI5_REP_LOAD/003",
+                message: { lang: "en", value: "You are not authorized to create" },
+                innererror: {
+                  errordetails: [
+                    { severity: "error", message: "You are not authorized to create" },
+                    { severity: "info", message: "Upload canceled: SAPUI5 ABAP repository has not been created" }
+                  ]
+                }
+              }
+            })
+          );
+          return;
+        }
+        repositoryPackage = sent;
+        res.writeHead(201, {
+          "content-type": "application/atom+xml;charset=utf-8",
+          "sap-message": JSON.stringify({ severity: "info", message: "BSP application created" })
+        });
+        res.end("<entry/>");
+        return;
+      }
+      if (req.method === "PUT" && pathOnly.includes("/Repositories(")) {
+        const sent = /<d:Package>([^<]*)<\/d:Package>/.exec(body)?.[1] ?? "";
+        if (refuse.includes(sent)) {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: { code: "/UI5/UI5_REP_LOAD/003", message: { value: "refused" } } }));
+          return;
+        }
+        repositoryPackage = sent;
+        res.writeHead(200, { "content-type": "application/atom+xml;charset=utf-8" });
+        res.end("<entry/>");
+        return;
+      }
+      if (pathOnly.startsWith("/sap/bc/ui5_ui5/sap/")) {
+        res.writeHead(200, { "content-type": "text/html;charset=utf-8" });
+        res.end("<html><body>app</body></html>");
+        return;
+      }
+      res.writeHead(404, { "content-type": "text/plain" });
+      res.end("not found");
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return {
+    origin: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+    requests,
+    close: () => new Promise<void>((resolve) => server.close(() => resolve()))
+  };
+}
+
+describe("package recovery helpers", () => {
+  it("names a package after the application, in the shape a customer component accepts", () => {
+    expect(candidatePackageName("travelz")).toBe("ZTRAVELZ");
+    expect(candidatePackageName("deployed-app")).toBe("ZDEPLOYED_APP");
+    expect(candidatePackageName("/myco/travel")).toBe("ZTRAVEL");
+    expect(candidatePackageName("")).toBe("ZAPP");
+    expect(candidatePackageName("travelz", 1)).toBe("ZTRAVELZ_1");
+    expect(candidatePackageName("A".repeat(40)).length).toBeLessThanOrEqual(30);
+    expect(candidatePackageName("A".repeat(40), 2)).toMatch(/_2$/);
+    expect(candidatePackageName("A".repeat(40), 2).length).toBeLessThanOrEqual(30);
+  });
+
+  it("builds the package entry ADT accepts, in the order it checks", () => {
+    const payload = packageCreatePayload({ name: "ZMCPDEPLOY", superPackage: "ZLOCAL", softwareComponent: "ZLOCAL", recordChanges: false });
+    expect(payload).toContain('adtcore:name="ZMCPDEPLOY"');
+    expect(payload).toContain('<pak:superPackage adtcore:uri="/sap/bc/adt/packages/zlocal" adtcore:type="DEVC/K" adtcore:name="ZLOCAL"/>');
+    expect(payload).toContain('<pak:softwareComponent pak:name="ZLOCAL"/>');
+    expect(payload).toContain('pak:recordChanges="false"');
+    // the server rejects the entry outright when an element is out of order
+    expect(payload.indexOf("<pak:attributes")).toBeLessThan(payload.indexOf("<pak:superPackage"));
+    expect(payload.indexOf("<pak:superPackage")).toBeLessThan(payload.indexOf("<pak:transport>"));
+    expect(payload.indexOf("<pak:useAccesses")).toBeLessThan(payload.indexOf("<pak:subPackages"));
+    expect(packageCreatePayload({ name: "Z", superPackage: "ZLOCAL", softwareComponent: "ZLOCAL", recordChanges: true })).toContain(
+      'pak:recordChanges="true"'
+    );
+    expect(/adtcore:description="([^"]*)"/.exec(payload)?.[1].length).toBeLessThanOrEqual(60);
+  });
+
+  it("recognises the refusal for a package the system cannot use", () => {
+    expect(looksLikePackageRefusal('{"code":"/UI5/UI5_REP_LOAD/003","message":"You are not authorized to create"}')).toBe(true);
+    expect(looksLikePackageRefusal("Upload canceled: SAPUI5 ABAP repository has not been created")).toBe(true);
+    expect(looksLikePackageRefusal("No authorization to access Service")).toBe(false);
+    expect(looksLikePackageRefusal("CSRF token validation failed")).toBe(false);
+    expect(looksLikePackageRefusal("Payload too large")).toBe(false);
+  });
+});
+
+describe("deploying when the system refuses the default package", () => {
+  let system: MockSystem;
+  let dataDir: string;
+  let config: AppConfig;
+  let appPath: string;
+  let workDir: string;
+
+  beforeAll(async () => {
+    system = await startMockSystem({ refusePackages: ["$TMP", "ZCHOSEN"] });
+    workDir = fs.mkdtempSync(path.join(os.tmpdir(), "fiori-mcp-package-"));
+    dataDir = emptyDataDir();
+    appPath = writeApp(workDir, `${system.origin}/odata/v4/`);
+    config = testConfig([{ name: "MOCK", url: system.origin, user: "u", password: "p", client: "100" }], dataDir);
+  });
+
+  afterAll(async () => {
+    await system.close();
+    fs.rmSync(workDir, { recursive: true, force: true });
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it("creates a package the system accepts and uploads again, without asking", async () => {
+    const result = await deployFioriApp({ config, appPath, install: false, bootstrapCheck: false });
+
+    expect(result.ok).toBe(true);
+    expect(result.action).toBe("created");
+    expect(result.bsp.package).toBe("ZDEPLOYED_APP");
+    expect(result.warnings.join(" ")).toMatch(/refused package '\$TMP'/);
+    expect(result.warnings.join(" ")).toMatch(/created for this application/);
+
+    // the package went in over ADT, hanging from the component's generated package
+    const create = system.requests.find((r) => r.method === "POST" && r.url.startsWith("/sap/bc/adt/packages"));
+    expect(create, "the package was never created").toBeTruthy();
+    expect(create!.headers["x-csrf-token"]).toBe("TOKEN-123"); // the handshake, not an open write
+    expect(create!.body).toContain('adtcore:name="ZDEPLOYED_APP"');
+    expect(create!.body).toContain('adtcore:name="ZLOCAL"');
+    expect(create!.body).toContain('<pak:softwareComponent pak:name="ZLOCAL"/>');
+    expect(create!.body.indexOf("<pak:attributes")).toBeLessThan(create!.body.indexOf("<pak:superPackage"));
+    expect(create!.body.indexOf("<pak:superPackage")).toBeLessThan(create!.body.indexOf("<pak:transport>"));
+
+    // the refused attempt and the one that went through, in that order
+    const uploads = system.requests.filter((r) => r.method === "POST" && r.url.includes("/Repositories?"));
+    expect(uploads).toHaveLength(2);
+    expect(uploads[0].body).toContain("<d:Package>$TMP</d:Package>");
+    expect(uploads[1].body).toContain("<d:Package>ZDEPLOYED_APP</d:Package>");
+    // a package that does not record changes needs no transport request
+    expect(uploads[1].url).not.toContain("TransportRequest");
+    expect(result.verification).toMatchObject({ attempted: true, ok: true, status: 200 });
+  });
+
+  it("keeps that package for every later deploy instead of rediscovering it", async () => {
+    const adtBefore = system.requests.filter((r) => r.url.includes("/adt/")).length;
+    const result = await deployFioriApp({ config, appPath, install: false, bootstrapCheck: false, skipBuild: true });
+
+    expect(result.action).toBe("updated");
+    expect(result.ok).toBe(true);
+    // the package comes from the repository itself: no ADT round trip at all
+    expect(result.bsp.package).toBe("ZDEPLOYED_APP");
+    expect(system.requests.filter((r) => r.url.includes("/adt/")).length).toBe(adtBefore);
+    const put = system.requests.filter((r) => r.method === "PUT").pop();
+    expect(put!.body).toContain("<d:Package>ZDEPLOYED_APP</d:Package>");
+  });
+});
+
+describe("package recovery when the caller chose the package", () => {
+  it("reports the refusal as it stands and touches nothing else", async () => {
+    const system = await startMockSystem({ refusePackages: ["$TMP", "ZCHOSEN"] });
+    const dataDir = emptyDataDir();
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "fiori-mcp-explicit-"));
+    const config = testConfig([{ name: "MOCK", url: system.origin, user: "u", password: "p", client: "100" }], dataDir);
+    const app = writeApp(workDir, `${system.origin}/odata/v4/`);
+
+    await expect(
+      deployFioriApp({ config, appPath: app, install: false, bootstrapCheck: false, abapPackage: "ZCHOSEN" })
+    ).rejects.toThrow(/Upload of 'ZDEPLOYED_APP' failed \(HTTP 400\)/);
+    // an explicit package is authoritative: no ADT call, no second attempt
+    expect(system.requests.filter((r) => r.url.includes("/adt/"))).toHaveLength(0);
+    expect(system.requests.filter((r) => r.method === "POST" && r.url.includes("/Repositories?"))).toHaveLength(1);
+
+    await system.close();
+    fs.rmSync(workDir, { recursive: true, force: true });
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+});
+
+describe("package recovery when the system offers no package", () => {
+  it("explains both refusals instead of hiding the first one", async () => {
+    const system = await startMockSystem({ components: [] });
+    const dataDir = emptyDataDir();
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "fiori-mcp-nopkg-"));
+    const config = testConfig([{ name: "MOCK", url: system.origin, user: "u", password: "p", client: "100" }], dataDir);
+    const app = writeApp(workDir, `${system.origin}/odata/v4/`);
+
+    await expect(
+      deployFioriApp({ config, appPath: app, install: false, bootstrapCheck: false })
+    ).rejects.toThrow(/Recovering into another package failed as well:[\s\S]*no customer software component/);
+
+    await system.close();
+    fs.rmSync(workDir, { recursive: true, force: true });
+    fs.rmSync(dataDir, { recursive: true, force: true });
   });
 });
