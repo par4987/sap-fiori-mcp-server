@@ -76,7 +76,12 @@ async function main(): Promise<void> {
   }
 
   if (argv.includes("--admin")) {
-    const admin = await startAdminServer(Number(flagValue(argv, "--port", process.env.SAP_FIORI_MCP_ADMIN_PORT ?? "7392")));
+    const portRaw = flagValue(argv, "--port", process.env.SAP_FIORI_MCP_ADMIN_PORT ?? "7392");
+    const port = Number(portRaw);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      throw new Error(`Invalid --port value '${portRaw}': expected an integer between 1 and 65535.`);
+    }
+    const admin = await startAdminServer(port);
     // the token is printed once and never stored; closing this process invalidates it
     process.stdout.write(`
 Connection admin panel ready — open this exact link (it carries a one-time token):

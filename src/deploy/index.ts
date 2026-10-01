@@ -167,23 +167,29 @@ async function probeLocalResources(
   config: AppConfig,
   timeoutMs: number
 ): Promise<string | null> {
-  const origin = originOf(baseUrl);
-  if (!origin) return null;
-  for (const root of LOCAL_RESOURCE_ROOTS) {
-    try {
-      const res = await odataRequest({
-        url: `${origin}${root}/sap-ui-core.js`,
-        system: target.system,
-        headers: target.headers,
-        method: "HEAD",
-        accept: "*/*",
-        timeoutMs,
-        config,
-        trustedUrls: target.trustedUrls
-      });
-      if (res.ok) return root;
-    } catch {
-      /* try the next known root */
+  const technical = originOf(baseUrl);
+  // on ABAP Environment the technical host abap.* and the app-serving host abap-web.* are not the
+  // same origin, and only the latter answers the bootstrap path the browser will ask for
+  const web = technical?.includes(".abap.") ? technical.replace(".abap.", ".abap-web.") : technical;
+  const origins = [...new Set([technical, web].filter((o): o is string => !!o))];
+  if (!origins.length) return null;
+  for (const origin of origins) {
+    for (const root of LOCAL_RESOURCE_ROOTS) {
+      try {
+        const res = await odataRequest({
+          url: `${origin}${root}/sap-ui-core.js`,
+          system: target.system,
+          headers: target.headers,
+          method: "HEAD",
+          accept: "*/*",
+          timeoutMs,
+          config,
+          trustedUrls: target.trustedUrls
+        });
+        if (res.ok) return root;
+      } catch {
+        /* try the next known root */
+      }
     }
   }
   return null;
@@ -201,7 +207,9 @@ function i18nValue(manifest: Record<string, unknown>, webappDir: string, raw: un
   const rel = typeof declared === "string" && declared ? declared : "i18n/i18n.properties";
   try {
     const text = fs.readFileSync(path.join(webappDir, rel), "utf8");
-    const line = new RegExp(`^${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*[=:]\\s*(.*)$`, "m").exec(text);
+    // a BOM starts the file, so the key on the first line would never match without this
+    const noBom = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+    const line = new RegExp(`^${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*[=:]\\s*(.*)$`, "m").exec(noBom);
     return line ? line[1].trim() || null : null;
   } catch {
     return null;
@@ -251,7 +259,7 @@ export async function deployFioriApp(params: DeployParams): Promise<DeployResult
   if (!found) throw new Error(`No manifest.json found at or under ${appPath}.`);
   const { manifest, webappDir } = found;
   const appRoot = projectRootOf(appPath);
-  const appFolderName = path.basename(webappDir === appPath ? appRoot : appRoot);
+  const appFolderName = path.basename(appRoot);
 
   const { target, inferred, warnings: targetWarnings } = await resolveDeployTarget(params, manifestServiceUris(manifest));
   warnings.push(...targetWarnings);
@@ -276,7 +284,8 @@ export async function deployFioriApp(params: DeployParams): Promise<DeployResult
     target: {
       source: target.source,
       kind: target.source.startsWith("destination:") ? "destination" : "system",
-      name: target.source.split(":").slice(1).join(":"),
+      // the name is the part after "destination:" / "system:"; without a prefix it's the whole thing
+      name: target.source.replace(/^[^:]+:/, "") || target.source,
       url: target.url,
       inferred
     },
@@ -314,7 +323,7 @@ export async function deployFioriApp(params: DeployParams): Promise<DeployResult
     }
     const rewritten = rewriteBootstrap(indexHtml, { mode: bootstrapMode, localRoot, version });
     bootstrap = {
-      mode: localRoot ? "local" : bootstrapMode,
+      mode: localRoot ? "local" : rewritten.to && /^https?:/.test(rewritten.to) ? "cdn" : bootstrapMode,
       from: rewritten.from,
       to: rewritten.to,
       changed: rewritten.changed

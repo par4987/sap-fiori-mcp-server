@@ -153,8 +153,10 @@ export function registerFioriTools(server: McpServer, config: AppConfig, name: (
           odataVersion: model.version,
           namespaces: model.namespaces,
           entitySets: model.entitySets.map((es) => ({ name: es.name, entityType: es.entityType, navigations: es.navigations })),
-          entityTypes: model.entityTypes.map((et) => ({ name: et.name, keys: et.keys, properties: et.properties.length, navigationProperties: et.navigationProperties.map((n) => n.name) })),
-          annotationTargets: model.annotations.slice(0, 20).map((a) => a.target)
+          entityTypes: model.entityTypes.map((et) => ({ name: et.name, keys: et.keys, properties: et.properties.map((p) => p.name), navigationProperties: et.navigationProperties.map((n) => n.name) })),
+          // the array covers at most 20 targets; without the total, a client cannot tell partial from complete
+          annotationTargets: model.annotations.slice(0, 20).map((a) => a.target),
+          annotationTargetCount: model.annotations.length,
         });
       } catch (e) {
         return err(e);
@@ -414,6 +416,11 @@ export function registerFioriTools(server: McpServer, config: AppConfig, name: (
     },
     async (args) => {
       try {
+        // the schema promises an absolute path; resolve() would otherwise anchor at the MCP
+        // server's cwd, which the caller has no way to predict
+        if (!path.isAbsolute(args.appPath)) {
+          throw new Error(`appPath must be absolute (e.g. C:\\proj\\app or /home/me/app); got '${args.appPath}'.`);
+        }
         return json(executeFunctionality(args.appPath, args.functionalityId, args.params ?? {}));
       } catch (e) {
         return err(e);
@@ -442,7 +449,8 @@ export function registerFioriTools(server: McpServer, config: AppConfig, name: (
           namespaces: model.namespaces,
           entitySets: model.entitySets,
           entityTypes: model.entityTypes,
-          annotations: model.annotations.slice(0, 50)
+          annotations: model.annotations.slice(0, 50),
+          annotationsTotal: model.annotations.length
         });
       } catch (e) {
         return err(e);

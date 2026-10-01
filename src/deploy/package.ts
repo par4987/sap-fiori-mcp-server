@@ -271,6 +271,7 @@ export async function resolveWritablePackage(opts: ResolvePackageOptions): Promi
       continue;
     }
 
+    let broken = false;
     for (let attempt = 0; attempt < 3; attempt++) {
       const candidate = candidatePackageName(opts.preferredName, attempt);
       const existing = await readPackage(client, candidate);
@@ -292,14 +293,28 @@ export async function resolveWritablePackage(opts: ResolvePackageOptions): Promi
         logger.info("deploy: created package", { package: result.created.name, superPackage: root.name, softwareComponent });
         return result.created;
       }
+      // a raced create (another deploy winning between our read and our POST) reads exactly like
+      // an existing package — so look again instead of inventing a _1 name
+      if (/already exist|already exists|PAK042/i.test(result.failed)) {
+        const raced = await readPackage(client, candidate);
+        if (raced) {
+          logger.info("deploy: reusing raced package", { package: raced.name, softwareComponent });
+          return { name: raced.name, source: "existing", parent: root.name };
+        }
+      }
       notes.push(`${candidate} under ${root.name} (${softwareComponent}): ${result.failed}`);
       // "provided repository", "software component not modifiable", "not a valid software
-      // component" and friends are about the component, not the name: move on to the next one
-      if (/(provided repository|software component|TR458|TR463|not modifiable)/i.test(result.failed)) break;
+      // component" and friends are about the component, not the name: move on to the next one —
+      // and do not offer the component's own package as a fallback, it would refuse the upload
+      // for exactly the same reason
+      if (/(provided repository|software component|TR458|TR463|not modifiable)/i.test(result.failed)) {
+        broken = true;
+        break;
+      }
     }
     // Nothing new could be created, but this component does hold packages: its own package is the
     // next best place for the application, and using it costs no write at all.
-    roots.push(root);
+    if (!broken) roots.push(root);
   }
 
   if (roots.length) {

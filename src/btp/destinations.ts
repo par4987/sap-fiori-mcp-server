@@ -22,7 +22,7 @@ import path from "node:path";
 import type { AppConfig, SapSystem } from "../config.js";
 import { logger } from "../logger.js";
 import { stripBom } from "../util/fs.js";
-import { expandEnvRefsDeep } from "../util/envref.js";
+import { expandEnvRefsDeep, missingEnvWarning } from "../util/envref.js";
 import { readServiceKeyFile } from "./service-key.js";
 import { readRefreshToken } from "./token-store.js";
 import { resolveSystem } from "../odata/client.js";
@@ -85,9 +85,22 @@ function str(v: unknown): string {
   return typeof v === "string" ? v.trim() : typeof v === "number" ? String(v) : "";
 }
 
-function pick(raw: Record<string, unknown>, keys: string[]): string {
+/** Secrets keep significant leading/trailing whitespace: trimming a password corrupts it. */
+function raw(v: unknown): string {
+  return typeof v === "string" ? v : typeof v === "number" ? String(v) : "";
+}
+
+function pick(rawObj: Record<string, unknown>, keys: string[]): string {
   for (const k of keys) {
-    const v = str(raw[k]);
+    const v = str(rawObj[k]);
+    if (v) return v;
+  }
+  return "";
+}
+
+function pickSecret(rawObj: Record<string, unknown>, keys: string[]): string {
+  for (const k of keys) {
+    const v = raw(rawObj[k]);
     if (v) return v;
   }
   return "";
@@ -96,7 +109,8 @@ function pick(raw: Record<string, unknown>, keys: string[]): string {
 /** Normalize a raw destination object (cockpit format or camelCase) into BtpDestination. */
 export function normalizeDestination(raw: Record<string, unknown>, source: DestinationSource, fallbackName?: string): BtpDestination {
   const name = pick(raw, ["Name", "name", "DestinationName", "destinationName"]) || fallbackName || "unnamed";
-  const authRaw = pick(raw, ["Authentication", "authentication", "authType", "Type", "type"]);
+  // "Type" is not authentication in the cockpit format (it is HTTP/RFC/MAIL), so it never feeds auth.
+  const authRaw = pick(raw, ["Authentication", "authentication", "authType"]);
   const authType = (AUTH_TYPES.find((a) => a.toLowerCase() === authRaw.toLowerCase()) ??
     (authRaw.toLowerCase() === "basic" ? "BasicAuthentication" : authRaw.toLowerCase() === "none" || !authRaw ? "NoAuthentication" : authRaw)) as DestinationAuthType;
   const customHeaders: Record<string, string> = {};
@@ -108,9 +122,17 @@ export function normalizeDestination(raw: Record<string, unknown>, source: Desti
   }
   // A service key answers every OAuth question at once, so it wins over hand-typed fields and
   // keeps the client secret in the key file instead of in this destination.
+  //
+  // Only local sources may point at a local file: a destination served by the Destination Service
+  // is remote content, and letting `serviceKeyPath` in it read an arbitrary local key would let a
+  // shared subaccount mint a token from a victim's key and receive it at its own URL.
   const serviceKeyPath = pick(raw, ["serviceKeyPath", "ServiceKeyPath", "serviceKeyFile", "servicekeypath"]);
+  const mayReadServiceKey = source !== "destination-service"; // only locally supplied destinations may point at local files
   let fromKey: { clientId?: string; clientSecret?: string; tokenServiceUrl?: string; url?: string } = {};
-  if (serviceKeyPath) {
+  if (serviceKeyPath && !mayReadServiceKey) {
+    logger.warn("destination from a remote source names a local service key: ignoring serviceKeyPath", { name, source });
+  }
+  if (serviceKeyPath && mayReadServiceKey) {
     try {
       const key = readServiceKeyFile(serviceKeyPath);
       // the host the key names is the one that serves the APIs; its -web twin only answers
@@ -121,17 +143,20 @@ export function normalizeDestination(raw: Record<string, unknown>, source: Desti
     }
   }
 
+  // cockpit exports give tokenServiceURL already ending in /oauth/token; keep a single suffix
+  const tokenServiceUrl = (fromKey.tokenServiceUrl || pick(raw, ["tokenServiceURL", "tokenServiceUrl", "token_service_url", "tokenUrl"]) || undefined)?.replace(/\/oauth\/token\/?$/i, "") || undefined;
+
   return {
     name,
     url: pick(raw, ["URL", "url", "Uri", "uri"]) || fromKey.url || "",
     authType,
     proxyType: pick(raw, ["ProxyType", "proxyType"]) || undefined,
     username: pick(raw, ["User", "user", "username", "Username"]) || undefined,
-    password: pick(raw, ["Password", "password"]) || undefined,
+    password: pickSecret(raw, ["Password", "password"]) || undefined,
     client: pick(raw, ["sap-client", "client", "SAPClient"]) || undefined,
     clientId: fromKey.clientId || pick(raw, ["clientId", "clientid", "ClientID"]) || undefined,
-    clientSecret: fromKey.clientSecret || pick(raw, ["clientSecret", "clientsecret", "ClientSecret"]) || undefined,
-    tokenServiceUrl: fromKey.tokenServiceUrl || pick(raw, ["tokenServiceURL", "tokenServiceUrl", "token_service_url", "tokenUrl"]) || undefined,
+    clientSecret: fromKey.clientSecret || pickSecret(raw, ["clientSecret", "clientsecret", "ClientSecret"]) || undefined,
+    tokenServiceUrl,
     tokenServiceUser: pick(raw, ["tokenServiceUser", "tokenServiceUsername"]) || undefined,
     tokenServicePassword: pick(raw, ["tokenServicePassword", "tokenServiceUserPassword"]) || undefined,
     userToken: pick(raw, ["userToken", "user_token", "bearerToken"]) || process.env.BTP_USER_TOKEN?.trim() || undefined,
@@ -144,7 +169,10 @@ export function normalizeDestination(raw: Record<string, unknown>, source: Desti
 
 function readDestinationsFromJson(jsonText: string, source: DestinationSource, fallbackName?: string): BtpDestination[] {
   // destinations carry client secrets, so they benefit from ${env:NAME} the most
-  const parsed = expandEnvRefsDeep(JSON.parse(stripBom(jsonText))) as unknown;
+  const missing = new Set<string>();
+  const parsed = expandEnvRefsDeep(JSON.parse(stripBom(jsonText)), missing) as unknown;
+  const warning = missingEnvWarning(`${source} destinations`, missing);
+  if (warning) logger.warn(warning);
   if (Array.isArray(parsed)) return parsed.filter((d) => d && typeof d === "object").map((d) => normalizeDestination(d as Record<string, unknown>, source, fallbackName));
   if (parsed && typeof parsed === "object") {
     const obj = parsed as Record<string, unknown>;
@@ -262,14 +290,15 @@ export function getDestinationServiceConfig(): DestinationServiceConfig | null {
   const clientId = process.env.BTP_CLIENT_ID?.trim();
   const clientSecret = process.env.BTP_CLIENT_SECRET?.trim();
   if (apiUrl && tokenUrl && clientId && clientSecret) {
-    return { apiUrl: apiUrl.replace(/\/$/, ""), tokenUrl: tokenUrl.replace(/\/$/, ""), clientId, clientSecret };
+    // the same value people paste when they copy a service key, which carries the suffix already
+    return { apiUrl: apiUrl.replace(/\/$/, ""), tokenUrl: tokenUrl.replace(/\/oauth\/token\/?$/i, "").replace(/\/$/, ""), clientId, clientSecret };
   }
 
   const vcapRaw = process.env.VCAP_SERVICES?.trim();
   if (!vcapRaw) return null;
   try {
     const vcap = JSON.parse(vcapRaw) as Record<string, Array<{ name?: string; label?: string; credentials?: Record<string, unknown> }>>;
-    let uri = "";
+    let destinationBinding: Record<string, unknown> | null = null;
     let xsuaa: Record<string, unknown> | null = null;
     for (const [service, bindings] of Object.entries(vcap)) {
       if (!Array.isArray(bindings)) continue;
@@ -277,18 +306,24 @@ export function getDestinationServiceConfig(): DestinationServiceConfig | null {
         const label = `${service} ${b.label ?? ""}`.toLowerCase();
         const creds = b.credentials;
         if (!creds) continue;
-        if (/destination/.test(label) && (str(creds.uri) || str(creds.url))) uri = str(creds.uri) || str(creds.url);
-        if (/xsuaa|identity/.test(label) && str(creds.clientid) && str(creds.clientsecret)) {
+        if (/destination/.test(label) && (str(creds.uri) || str(creds.url))) destinationBinding = creds;
+        // an Identity Authentication (IAS) binding also carries clientid/clientsecret but is not
+        // the XSUAA the Destination Service accepts, so identity-only labels must not win
+        if (/xsuaa/.test(label) && str(creds.clientid) && str(creds.clientsecret)) {
           xsuaa = creds;
         }
       }
     }
-    if (uri && xsuaa) {
-      const tokenUrlVcap = str(xsuaa.url);
-      const clientIdVcap = str(xsuaa.clientid);
-      const clientSecretVcap = str(xsuaa.clientsecret);
+    // the destination binding is self-sufficient on real BTP: uri + its own UAA clientid/secret.
+    const destCreds = destinationBinding ? { clientid: str(destinationBinding.clientid), clientsecret: str(destinationBinding.clientsecret), url: str(destinationBinding.url) } : null;
+    const effective = destCreds?.clientid && destCreds.clientsecret && destCreds.url ? destCreds : xsuaa;
+    const uri = str(destinationBinding?.uri) || str(destinationBinding?.url);
+    if (uri && effective) {
+      const tokenUrlVcap = str(effective.url);
+      const clientIdVcap = str(effective.clientid);
+      const clientSecretVcap = str(effective.clientsecret);
       if (tokenUrlVcap && clientIdVcap && clientSecretVcap) {
-        return { apiUrl: uri.replace(/\/$/, ""), tokenUrl: tokenUrlVcap.replace(/\/$/, ""), clientId: clientIdVcap, clientSecret: clientSecretVcap };
+        return { apiUrl: uri.replace(/\/$/, ""), tokenUrl: tokenUrlVcap.replace(/\/oauth\/token\/?$/i, "").replace(/\/$/, ""), clientId: clientIdVcap, clientSecret: clientSecretVcap };
       }
     }
   } catch (e) {
@@ -421,7 +456,8 @@ export async function buildAuthHeaders(d: BtpDestination, timeoutMs = 30000, dat
   const headers: Record<string, string> = {};
   if (d.client) headers["sap-client"] = d.client;
   if (d.headers) Object.assign(headers, d.headers);
-  if (headers.authorization) return headers; // pre-exchanged (destination service) or explicit header
+  // a destination-declared Authorization (any case) is authoritative: nothing else may ride along
+  if (Object.keys(headers).some((h) => h.toLowerCase() === "authorization")) return headers;
 
   switch (d.authType) {
     case "BasicAuthentication":
@@ -559,8 +595,10 @@ export async function resolveODataTarget(
           (getDestinationServiceConfig() ? "" : ". The BTP Destination Service is not configured (set BTP_CLIENT_ID, BTP_CLIENT_SECRET, BTP_TOKEN_URL, BTP_DESTINATION_API_URL or VCAP_SERVICES).")
       );
     }
-    const base = p.serviceUrl ?? (p.servicePath ? joinUrl(d.url, p.servicePath) : d.url);
-    if (!base) throw new Error(`Destination '${d.name}' has no URL and no servicePath/serviceUrl was provided.`);
+    // the destination's base URL is the one its credentials belong to: a caller-supplied
+    // absolute serviceUrl must never replace it, or the credentials would leave with it
+    const base = p.servicePath ? joinUrl(d.url, p.servicePath) : d.url;
+    if (!base) throw new Error(`Destination '${d.name}' has no URL and no servicePath was provided.`);
     const headers = await buildAuthHeaders(d, timeoutMs, config.dataDir);
     return { url: base, headers, source: `destination:${d.name}`, destination: redactDestination(d), trustedUrls: [d.url] };
   }
@@ -577,6 +615,11 @@ export async function resolveODataTarget(
   if (system && (p.servicePath || !p.serviceUrl)) {
     const url = p.serviceUrl ? p.serviceUrl : joinUrl(system.url, p.servicePath ?? "");
     return { url, headers: {}, system, source: `system:${system.name}`, trustedUrls: [system.url] };
+  }
+  // a system name plus an absolute URL keeps the system's credentials and host: the credentials
+  // were the reason the caller named the system at all
+  if (system && p.serviceUrl) {
+    return { url: p.serviceUrl, headers: {}, system, source: `system:${system.name}`, trustedUrls: [system.url] };
   }
 
   // 3) plain URL

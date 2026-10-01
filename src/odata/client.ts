@@ -31,6 +31,53 @@ export interface ODataResponse {
   json?: unknown;
 }
 
+/** Strip userinfo from a URL before it lands in a log line. */
+function scrubUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    if (u.username || u.password) {
+      u.username = "";
+      u.password = "";
+    }
+    return u.toString();
+  } catch {
+    return url.replace(/^(https?:\/\/)[^/]*@/i, "$1***@");
+  }
+}
+
+/** At most this many redirects are followed, and every hop is re-validated against the allowlist. */
+const MAX_REDIRECTS = 3;
+
+/**
+ * fetch() with redirect: "manual": the agent — not the remote server — decides where the next hop
+ * goes, because a 302 can point at an internal address the allowlist was meant to keep unreachable.
+ */
+async function fetchFollowingRedirects(
+  url: string,
+  init: RequestInit,
+  config: AppConfig | undefined,
+  trustedUrls: string[]
+): Promise<Response> {
+  let next = url;
+  for (let hop = 0; ; hop++) {
+    if (config) assertUrlAllowed(config, next, trustedUrls);
+    const res = await fetch(next, { ...init, redirect: "manual" });
+    if (res.status === 301 || res.status === 302 || res.status === 303 || res.status === 307 || res.status === 308) {
+      const location = res.headers.get("location");
+      if (location && hop < MAX_REDIRECTS) {
+        try {
+          next = new URL(location, next).toString();
+        } catch {
+          return res; // an unparsable Location is a response, not a redirect to follow
+        }
+        await res.arrayBuffer().catch(() => undefined);
+        continue;
+      }
+    }
+    return res;
+  }
+}
+
 function buildHeaders(opts: ODataRequestOptions): Record<string, string> {
   const headers: Record<string, string> = {
     accept: opts.accept ?? "application/json",
@@ -49,7 +96,13 @@ function buildHeaders(opts: ODataRequestOptions): Record<string, string> {
 
 /** Perform an OData request with timeout, auth and optional CSRF token handshake. */
 export async function odataRequest(opts: ODataRequestOptions): Promise<ODataResponse> {
-  if (opts.config) assertUrlAllowed(opts.config, opts.url, [...(opts.trustedUrls ?? []), ...(opts.system ? [opts.system.url] : [])]);
+  const baseTrusted = [...(opts.trustedUrls ?? []), ...(opts.system ? [opts.system.url] : [])];
+  if (opts.config) {
+    assertUrlAllowed(opts.config, opts.url, baseTrusted);
+    // the CSRF probe is a request like any other: it carries the session cookie, so it obeys the
+    // allowlist too
+    if (opts.csrfUrl) assertUrlAllowed(opts.config, opts.csrfUrl, baseTrusted);
+  }
   const headers = buildHeaders(opts);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 30000);
@@ -58,11 +111,16 @@ export async function odataRequest(opts: ODataRequestOptions): Promise<ODataResp
       // IWFND issues the token against the session that asked for it, so the token alone is not
       // enough: the session cookie has to travel with it, or the upload is rejected as a forgery
       // with "CSRF token validation failed". The probe body is discarded — only the headers count.
-      const probe = await fetch(opts.csrfUrl ?? opts.url, {
-        method: "GET",
-        headers: { ...headers, "x-csrf-token": "fetch" },
-        signal: controller.signal
-      });
+      const probe = await fetchFollowingRedirects(
+        opts.csrfUrl ?? opts.url,
+        {
+          method: "GET",
+          headers: { ...headers, "x-csrf-token": "fetch" },
+          signal: controller.signal
+        },
+        opts.config,
+        baseTrusted
+      );
       const token = probe.headers.get("x-csrf-token");
       const getSetCookie = (probe.headers as Headers & { getSetCookie?: () => string[] }).getSetCookie;
       const cookies = typeof getSetCookie === "function" ? getSetCookie.call(probe.headers) : [];
@@ -70,13 +128,17 @@ export async function odataRequest(opts: ODataRequestOptions): Promise<ODataResp
       if (token) headers["x-csrf-token"] = token;
       await probe.arrayBuffer().catch(() => undefined);
     }
-    const res = await fetch(opts.url, {
-      method: opts.method ?? "GET",
-      headers,
-      body: opts.body,
-      signal: controller.signal,
-      redirect: "follow"
-    });
+    const res = await fetchFollowingRedirects(
+      opts.url,
+      {
+        method: opts.method ?? "GET",
+        headers,
+        body: opts.body,
+        signal: controller.signal
+      },
+      opts.config,
+      baseTrusted
+    );
     const responseHeaders: Record<string, string> = {};
     res.headers.forEach((v, k) => (responseHeaders[k] = v));
     const text = await res.text();
@@ -91,7 +153,8 @@ export async function odataRequest(opts: ODataRequestOptions): Promise<ODataResp
     }
     return { status: res.status, ok: res.ok, headers: responseHeaders, text, json };
   } catch (error) {
-    logger.error("odataRequest failed", { url: opts.url, error });
+    // a URL with userinfo in it (https://user:pass@host/...) must not drop the password into the log
+    logger.error("odataRequest failed", { url: scrubUrl(opts.url), error });
     throw error instanceof Error ? error : new Error(String(error));
   } finally {
     clearTimeout(timer);

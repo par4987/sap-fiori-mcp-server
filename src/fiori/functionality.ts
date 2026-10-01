@@ -114,10 +114,27 @@ function setPointer(obj: Record<string, unknown>, pointer: string, value: unknow
   let cur = obj;
   for (let i = 0; i < parts.length - 1; i++) {
     const key = parts[i];
+    // a JSON pointer segment like __proto__/constructor/prototype walks into Object.prototype:
+    // writing there pollutes every object in the process
+    if (key === "__proto__" || key === "constructor" || key === "prototype") {
+      throw new Error(`manifest update refused: path segment '${key}' would modify Object.prototype`);
+    }
     if (typeof cur[key] !== "object" || cur[key] === null) cur[key] = {};
     cur = cur[key] as Record<string, unknown>;
   }
-  cur[parts[parts.length - 1]] = value;
+  const last = parts[parts.length - 1];
+  if (last === "__proto__" || last === "constructor" || last === "prototype") {
+    throw new Error(`manifest update refused: path segment '${last}' would modify Object.prototype`);
+  }
+  cur[last] = value;
+}
+
+/** A view or controller name is a UI5 identifier, never a path. */
+const SAFE_IDENT = /^[A-Za-z][A-Za-z0-9_]*$/;
+function assertSafeName(kind: string, value: string): void {
+  if (!SAFE_IDENT.test(value)) {
+    throw new Error(`${kind} '${value}' is not a valid identifier (letters, digits, underscores, not starting with a digit).`);
+  }
 }
 
 function freeStyleViewTemplate(appId: string, viewName: string, controllerName: string): string {
@@ -177,7 +194,9 @@ export function executeFunctionality(
         routes.push({ pattern: navProp ? `${objectPageEntitySet}({${navProp}}):?query:` : pattern, name: routeName, target: routeName });
         message = `Object Page target '${routeName}' for entity set '${objectPageEntitySet}' added.`;
       } else {
-        // freestyle view page
+        // freestyle view page — the name ends up inside a path, so it must be an identifier
+        assertSafeName("viewName", viewName);
+        assertSafeName("routeName", routeName);
         const viewFile = path.join(webappDir, "view", `${viewName}.view.xml`);
         const controllerFile = path.join(webappDir, "controller", `${viewName}.controller.js`);
         if (!exists(viewFile)) {
@@ -224,6 +243,7 @@ export function executeFunctionality(
       changed.push(found.manifestPath);
       if (params.deleteViewFile === true && targetBefore) {
         const targetViewName = String(targetBefore["viewName"] ?? routeName);
+        assertSafeName("viewName", targetViewName); // it may come from hand-edited manifests too
         const viewFile = path.join(webappDir, "view", `${targetViewName}.view.xml`);
         if (exists(viewFile)) {
           fs.rmSync(viewFile);
@@ -236,23 +256,28 @@ export function executeFunctionality(
 
     case "add_controller_extension": {
       const controllerName = String(params.controllerName ?? "ExtendMain");
+      assertSafeName("controllerName", controllerName);
+      if (params.viewName !== undefined) assertSafeName("viewName", String(params.viewName));
       const extra = params.extensionCode ? String(params.extensionCode) : "";
       if (isFeV4) {
-        const extFile = path.join(webappDir, "ext", `Extend${controllerName.replace(/^Extend/, "")}.js`);
+        // UI5 resolves ext/<Name>.js to module <appId>.ext.<Name>: file and registration must agree
+        const fileName = controllerName.startsWith("Extend") ? controllerName : `Extend${controllerName}`;
+        const moduleId = `${appId}.ext.${fileName}`;
+        const extFile = path.join(webappDir, "ext", `${fileName}.js`);
         writeFileSafe(
           extFile,
-          `sap.ui.define([], function () {\n  "use strict";\n\n  return sap.ui.controller.extend || {};\n});\n/* ControllerExtension skeleton for Fiori elements v4:\n\nsap.ui.define([\n  "sap/ui/core/mvc/ControllerExtension"\n], function (ControllerExtension) {\n  "use strict";\n\n  return ControllerExtension.extend("${appId}.ext.${controllerName}", {\n    static: { id: "${controllerName}" },\n    override: {\n      onInit: function () {\n        // ${controllerName}: initialization\n      }${extra ? `,\n      ${extra}` : ""}\n    }\n  });\n});\n*/\n`
+          `sap.ui.define([\n  "sap/ui/core/mvc/ControllerExtension"\n], function (ControllerExtension) {\n  "use strict";\n\n  /**\n   * ${moduleId}\n   */\n  return ControllerExtension.extend("${moduleId}", {\n    override: {\n      onInit: function () {\n        // ${fileName}: initialization\n      }${extra ? `,\n      ${extra}` : ""}\n    }\n  });\n});\n`
         );
         created.push(extFile);
-        // register extends
-        const ui5 = (manifest["sap.ui5"] ??= {}) as Record<string, unknown>;
-        const ext = (ui5["extends"] ??= {}) as Record<string, unknown>;
-        const extensions = (ext["extensions"] ??= {}) as Record<string, unknown>;
-        setPointer(manifest, `sap.ui5/extends/extensions/sap.fe.controllerExtensions/${appId}.ext.${controllerName}`, `${appId}.ext.${controllerName}`);
-        void extensions;
+        // sap.fe expects { "<target>": { "controllerName": "<module>" } } — not a bare string
+        const targetView = params.viewName ? String(params.viewName) : "sap.fe.templates.ListReport.ListReportController";
+        const extensions = ((manifest["sap.ui5"] as Record<string, unknown>)["extends"] ??= {}) as Record<string, unknown>;
+        const extensionsMap = (extensions["extensions"] ??= {}) as Record<string, unknown>;
+        const controllerExtensions = (extensionsMap["sap.fe.controllerExtensions"] ??= {}) as Record<string, unknown>;
+        controllerExtensions[targetView] = { controllerName: moduleId };
         saveManifest(found);
         changed.push(found.manifestPath);
-        message = `Controller extension skeleton created at ext/${controllerName}.js and registered under sap.ui5/extends/extensions.`;
+        message = `Controller extension '${moduleId}' created at ext/${fileName}.js and wired for '${targetView}'.`;
       } else {
         const viewName = params.viewName ? String(params.viewName) : "App";
         const controllerFile = path.join(webappDir, "controller", `${controllerName}.controller.js`);
@@ -281,6 +306,12 @@ export function executeFunctionality(
       const config = (routing["config"] ??= {}) as Record<string, unknown>;
       config["routerClass"] = "sap.f.routing.Router";
       const ui5 = manifest["sap.ui5"] as Record<string, unknown>;
+      // a FE v4 app generated against NavContainer stays a one-column page even with the FCL
+      // router: the root view must move too, or the app stops opening at all
+      const rootView = ui5["rootView"] as Record<string, unknown> | undefined;
+      if (rootView && rootView["viewName"] === "sap.fe.core.rootView.NavContainer") {
+        rootView["viewName"] = "sap.fe.core.rootView.Fcl";
+      }
       const deps = (ui5["dependencies"] ??= {}) as Record<string, unknown>;
       const libs = (deps["libs"] ??= {}) as Record<string, unknown>;
       libs["sap.f"] = {};
@@ -298,14 +329,22 @@ export function executeFunctionality(
       if (exists(appView)) {
         let xml = readText(appView);
         if (!xml.includes("FlexibleColumnLayout")) {
-          xml = xml.replace(/<App[\s>]/g, '<f:FlexibleColumnLayout id="layout" xmlns:f="sap.f">').replace(/<\/App>/g, "</f:FlexibleColumnLayout>");
-          if (!xml.includes('xmlns:f="sap.f"') && !xml.includes("FlexibleColumnLayout")) {
-            // replace default App shell
-            xml = xml.replace("<pages>", `<f:beginColumnPages><pages></pages></f:beginColumnPages>`);
+          // element-whole replacement: a self-closing <App id="app"/> cannot take an opening tag
+          // in place of `<App` without leaving orphaned attributes behind
+          xml = xml.replace(/<App\b[^>]*?\/>/, '<f:FlexibleColumnLayout id="layout" xmlns:f="sap.f"/>');
+          if (!xml.includes("FlexibleColumnLayout")) {
+            xml = xml.replace(/<App\b[^>]*>/, '<f:FlexibleColumnLayout id="layout" xmlns:f="sap.f">').replace(/<\/App>/, "</f:FlexibleColumnLayout>");
           }
-          fs.writeFileSync(appView, xml, "utf8");
-          changed.push(appView);
+          if (!xml.includes("FlexibleColumnLayout")) {
+            logger.warn("enable_fcl: App.view.xml has no <App> element to replace; manifest only");
+          } else {
+            fs.writeFileSync(appView, xml, "utf8");
+            changed.push(appView);
+          }
         }
+        // the router has to look for the layout by its new name too
+        if ((config["controlId"] as string | undefined) === "app") config["controlId"] = "layout";
+        if ((config["controlAggregation"] as string | undefined) === "pages") config["controlAggregation"] = "beginColumnPages";
       }
       saveManifest(found);
       changed.push(found.manifestPath);

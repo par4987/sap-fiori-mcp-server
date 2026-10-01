@@ -20,7 +20,9 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { logger } from "../logger.js";
 
 export type SealKind = "dpapi" | "plain";
 
@@ -39,7 +41,10 @@ function tokensDir(dataDir: string): string {
 
 function tokenFile(dataDir: string, destination: string): string {
   const safe = destination.replace(/[^A-Za-z0-9._-]/g, "_");
-  return path.join(tokensDir(dataDir), `${safe}.json`);
+  // two destinations that differ only in sanitized characters (A B vs A_B) must not share a file
+  const needsHash = safe !== destination;
+  const hash = needsHash ? `.${crypto.createHash("sha256").update(destination, "utf8").digest("hex").slice(0, 8)}` : "";
+  return path.join(tokensDir(dataDir), `${safe}${hash}.json`);
 }
 
 /** Run PowerShell with the payload in the environment, never on a command line. */
@@ -103,7 +108,11 @@ export function saveRefreshToken(dataDir: string, destination: string, token: st
   const sealed = seal(token);
   const file = tokenFile(dataDir, destination);
   const body: StoredToken = { destination, kind: sealed.kind, value: sealed.value, storedAt: new Date().toISOString() };
-  fs.writeFileSync(file, JSON.stringify(body, null, 2) + "\n", { encoding: "utf8", mode: 0o600 });
+  // write-then-rename: a torn write (two logins racing, a crash mid-write) never leaves a
+  // half-JSON file that reads back as "no token"
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(body, null, 2) + "\n", { encoding: "utf8", mode: 0o600 });
+  fs.renameSync(tmp, file);
   try {
     fs.chmodSync(file, 0o600); // no-op on Windows, where the DPAPI blob is the protection
   } catch {
@@ -123,8 +132,10 @@ export function readRefreshToken(dataDir: string, destination: string): string |
   }
   try {
     return unseal(stored) || null;
-  } catch {
-    // a DPAPI blob sealed by another Windows user, or on another machine, cannot be opened here
+  } catch (e) {
+    // a DPAPI blob sealed by another Windows user, or on another machine, cannot be opened here —
+    // but a PowerShell module failure looks identical, so say which one this was
+    logger.warn("token unseal failed; file exists but the stored token could not be read", { destination, error: e instanceof Error ? e.message.split(/\r?\n/)[0] : String(e) });
     return null;
   }
 }

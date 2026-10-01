@@ -68,7 +68,7 @@ export function readLocalUi5Version(projectPath: string): string | null {
   for (const candidate of [path.join(projectPath, "ui5.yaml"), path.join(projectPath, "webapp", "ui5.yaml")]) {
     const yaml = tryReadText(candidate);
     if (yaml) {
-      const m = /^\s*version:\s*["']?([\d.]+)["']?\s*$/m.exec(yaml);
+      const m = /^\s*version:\s*["']?([\d.]+)["']?\s*(#.*)?$/m.exec(yaml);
       if (m) return m[1];
     }
   }

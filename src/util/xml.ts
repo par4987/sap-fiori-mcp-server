@@ -36,7 +36,9 @@ export function parseAttrs(attrString: string): Record<string, string> {
   const re = /([\w:.-]+)\s*=\s*("([^"]*)"|'([^']*)')/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(attrString)) !== null) {
-    attrs[m[1]] = m[3] ?? m[4] ?? "";
+    // attribute values arrive entity-encoded: a label like "Customer &amp; Material" must come
+    // out with the ampersand it actually contains
+    attrs[m[1]] = decodeXmlEntities(m[3] ?? m[4] ?? "");
   }
   return attrs;
 }

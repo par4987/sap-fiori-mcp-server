@@ -78,18 +78,27 @@ function run(cmd: string, args: string[], cwd: string, timeoutMs: number): Promi
     };
     child.stdout?.on("data", collect);
     child.stderr?.on("data", collect);
+    // kill() reports nothing and a stubborn child fires no close: resolve either way
+    let settled = false;
+    const settle = (code: number) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      clearTimeout(killGuard);
+      resolve({ code, out: out.slice(-LOG_LIMIT) });
+    };
+    const killGuard = setTimeout(() => settle(-2), timeoutMs + 5000);
     const timer = setTimeout(() => {
       out += `\n[timeout after ${Math.round(timeoutMs / 1000)}s]`;
       child.kill("SIGKILL");
     }, timeoutMs);
     child.on("error", (e) => {
+      settled = true;
       clearTimeout(timer);
+      clearTimeout(killGuard);
       reject(new Error(`${cmd} could not be started: ${e.message}`));
     });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      resolve({ code: code ?? -1, out: out.slice(-LOG_LIMIT) });
-    });
+    child.on("close", (code) => settle(code ?? -1));
   });
 }
 

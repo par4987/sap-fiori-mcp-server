@@ -32,6 +32,14 @@ function walk(dir: string, base: string, out: string[]): void {
     const rel = base ? `${base}/${entry.name}` : entry.name;
     if (entry.isDirectory()) walk(abs, rel, out);
     else if (entry.isFile()) out.push(rel);
+    else if (entry.isSymbolicLink()) {
+      // junctions/links into the app folder carry real files the archive cannot skip silently
+      try {
+        if (fs.statSync(abs).isFile()) out.push(rel);
+      } catch {
+        /* a link to nothing: the app does not need it */
+      }
+    }
   }
 }
 
@@ -54,10 +62,20 @@ export async function zipFolder(dir: string, overrides: ZipOverride[] = []): Pro
     zip.on("error", reject);
   });
 
-  for (const rel of paths) {
-    const override = overrideByPath.get(rel);
-    if (override) zip.addBuffer(Buffer.isBuffer(override.content) ? override.content : Buffer.from(override.content, "utf8"), rel);
-    else zip.addFile(path.join(abs, rel.replace(/\//g, path.sep)), rel);
+  try {
+    for (const rel of paths) {
+      const override = overrideByPath.get(rel);
+      if (override) zip.addBuffer(Buffer.isBuffer(override.content) ? override.content : Buffer.from(override.content, "utf8"), rel);
+      else zip.addFile(path.join(abs, rel.replace(/\//g, path.sep)), rel);
+    }
+  } catch (e) {
+    // a file vanishing between walk and add must not leave the stream hanging: abort, then throw
+    try {
+      zip.outputStream.destroy();
+    } catch {
+      /* nothing left to destroy */
+    }
+    throw e;
   }
 
   zip.end();

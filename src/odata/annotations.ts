@@ -87,8 +87,11 @@ export async function fetchAnnotationDocuments(
   for (const entry of entries) {
     const src = entry.__metadata?.media_src ?? (entry.__metadata?.uri ? `${entry.__metadata.uri}/$value` : undefined);
     if (!src) continue;
-    const url = documentUrl(root, src);
+    // documentUrl can throw on a malformed media_src from the catalog — one bad entry must not
+    // stop the documents that are readable
+    let url: string = src;
     try {
+      url = documentUrl(root, src);
       const res = await fetch(url, { headers: { ...headers, accept: "application/xml" }, signal: AbortSignal.timeout(timeoutMs) });
       if (!res.ok) continue;
       const xml = await res.text();

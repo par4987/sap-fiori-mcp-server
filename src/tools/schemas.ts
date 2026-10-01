@@ -88,7 +88,9 @@ export const metadataOutput = {
   entitySets: z.array(entitySetSchema),
   entityTypes: z.array(entityTypeSchema),
   annotationTargets: z.array(z.string()).optional(),
-  annotations: z.array(z.unknown()).optional()
+  annotationTargetCount: z.number().optional().describe("Total before the slice, so a client knows when skipping would miss some"),
+  annotations: z.array(z.unknown()).optional(),
+  annotationsTotal: z.number().optional()
 };
 
 export const generateAppOutput = {

@@ -49,7 +49,8 @@ export function parseEdmx(xml: string): EdmxModel {
   // case-sensitive on purpose: avoid matching the lowercase version="1.0" of the <?xml?> declaration
   const versionMatch = /Version\s*=\s*["'](1\.0|2\.0|3\.0|4\.0)["']/.exec(xml);
   const rawVersion = versionMatch?.[1] ?? "4.0";
-  const version: "2.0" | "4.0" = rawVersion === "2.0" || rawVersion === "1.0" ? "2.0" : "4.0";
+  // V1/V2/V3 share the pre-V4 shape (Association/End with Multiplicity); only V4 changed it
+  const version: "2.0" | "4.0" = rawVersion === "4.0" ? "4.0" : "2.0";
 
   const namespaces = new Set<string>();
   for (const schema of findElements(xml, "Schema")) {
@@ -85,14 +86,19 @@ export function parseEdmx(xml: string): EdmxModel {
       const rel = findAttr(nav, "Relationship");
       let many = false;
       if (version === "2.0" && rel) {
-        // resolve multiplicity from the association's end matching this nav property
+        // the association end that matches this nav property's ToRole decides the multiplicity —
+        // a `*→1` association marks the to-one side "false", not whichever `*` appears anywhere
         const assoc = findElements(xml, "Association").find((a) => findAttr(a, "Name") === rel.split(".").pop());
         if (assoc) {
           const ends = findElements(assoc.content, "End");
-          const targetEnd = ends.find((e) => findAttr(e, "Role") && nav.content.includes(findAttr(e, "Role")!));
-          many = ends.some((e) => (findAttr(e, "Multiplicity") ?? "").startsWith("*"));
-          void targetEnd;
+          const toRole = findAttr(nav, "ToRole");
+          const targetEnd = toRole ? ends.find((e) => findAttr(e, "Role") === toRole) : undefined;
+          // no ToRole match (self-referencing or alias'd): to-one if no end is `*`, else collection
+          many = targetEnd ? (findAttr(targetEnd, "Multiplicity") ?? "").startsWith("*") : ends.some((e) => (findAttr(e, "Multiplicity") ?? "").startsWith("*"));
         }
+      } else if (version === "4.0") {
+        // V4 states the shape right on the nav: Collection(Type) means N, a bare Type means 0..1
+        many = (findAttr(nav, "Type") ?? "").startsWith("Collection(");
       }
       navigationProperties.push({
         name: navName,
@@ -107,34 +113,37 @@ export function parseEdmx(xml: string): EdmxModel {
   }
 
   // ---- Entity sets ----
+  // every EntityContainer matters: V4 allows several schemas, each with its own container
   const entitySets: EdmxEntitySet[] = [];
-  const containerContent = findElements(xml, "EntityContainer")[0]?.content ?? "";
-  for (const es of findElements(containerContent, "EntitySet")) {
-    const name = findAttr(es, "Name") ?? "";
-    const entityType = findAttr(es, "EntityType") ?? "";
-    const navigations: Record<string, string> = {};
-    for (const navBinding of findElements(es.content, "NavigationPropertyBinding")) {
-      const p = findAttr(navBinding, "Path");
-      const t = findAttr(navBinding, "Target");
-      if (p && t) navigations[p] = t;
+  for (const container of findElements(xml, "EntityContainer")) {
+    const containerContent = container.content;
+    for (const es of findElements(containerContent, "EntitySet")) {
+      const name = findAttr(es, "Name") ?? "";
+      const entityType = findAttr(es, "EntityType") ?? "";
+      const navigations: Record<string, string> = {};
+      for (const navBinding of findElements(es.content, "NavigationPropertyBinding")) {
+        const p = findAttr(navBinding, "Path");
+        const t = findAttr(navBinding, "Target");
+        if (p && t) navigations[p] = t;
+      }
+      entitySets.push({ name, entityType, navigations });
     }
-    entitySets.push({ name, entityType, navigations });
-  }
-  // V2: association sets resolve nav props to target entity sets
-  if (version === "2.0") {
-    for (const aset of findElements(containerContent, "AssociationSet")) {
-      const ends = findElements(aset.content, "End");
-      if (ends.length < 2) continue;
-      const aSet = findAttr(ends[0], "EntitySet");
-      const bSet = findAttr(ends[1], "EntitySet");
-      if (!aSet || !bSet) continue;
-      const source = entitySets.find((es) => es.name === aSet);
-      if (source) {
-        const etShort = source.entityType.split(".").pop()!;
-        const et = entityTypes.find((t) => t.name === etShort);
-        for (const nav of et?.navigationProperties ?? []) {
-          if (nav.relationship?.endsWith(findAttr(aset, "Association") ?? "#")) {
-            source.navigations[nav.name] = bSet;
+    // V2: association sets resolve nav props to target entity sets
+    if (version === "2.0") {
+      for (const aset of findElements(containerContent, "AssociationSet")) {
+        const ends = findElements(aset.content, "End");
+        if (ends.length < 2) continue;
+        const aSet = findAttr(ends[0], "EntitySet");
+        const bSet = findAttr(ends[1], "EntitySet");
+        if (!aSet || !bSet) continue;
+        const source = entitySets.find((es) => es.name === aSet);
+        if (source) {
+          const etShort = source.entityType.split(".").pop()!;
+          const et = entityTypes.find((t) => t.name === etShort);
+          for (const nav of et?.navigationProperties ?? []) {
+            if (nav.relationship?.endsWith(findAttr(aset, "Association") ?? "#")) {
+              source.navigations[nav.name] = bSet;
+            }
           }
         }
       }

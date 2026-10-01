@@ -72,8 +72,10 @@ export function registerBtpTools(server: McpServer, config: AppConfig, name: (n:
           try {
             const remote = (await listServiceDestinations(svc, config.requestTimeoutMs)).map(redactDestination);
             const known = new Set(local.map((d) => String(d.name).toLowerCase()));
-            result.destinationService = { count: remote.length, destinations: remote.filter((d) => !known.has(String(d.name).toLowerCase())) };
-            result.count = local.length + (result.destinationService as { count: number }).count;
+            const freshRemote = remote.filter((d) => !known.has(String(d.name).toLowerCase()));
+            // every count must answer the same question its array answers: how many entries are actually listed
+            result.destinationService = { count: freshRemote.length, destinations: freshRemote };
+            result.count = local.length + freshRemote.length;
           } catch (e) {
             result.destinationServiceError = e instanceof Error ? e.message : String(e);
           }
@@ -120,7 +122,7 @@ export function registerBtpTools(server: McpServer, config: AppConfig, name: (n:
             authorization: headers.authorization
               ? headers.authorization.startsWith("Basic ")
                 ? "Basic ***"
-                : `Bearer ${headers.authorization.slice(7, 12)}…(exchanged)`
+                : "Bearer *** (exchanged)"
               : undefined,
             sapClient: headers["sap-client"]
           };
@@ -189,7 +191,7 @@ export function registerBtpTools(server: McpServer, config: AppConfig, name: (n:
         const buildUrl = (version: "2.0" | "4.0") =>
           appendSearchParams(`${base}/${args.entitySet.replace(/^\//, "")}`, {
             $filter: args.filter,
-            $top: args.top !== undefined ? String(args.top) : args.count ? undefined : "50",
+            $top: args.top !== undefined ? String(args.top) : "50",
             $skip: args.skip !== undefined ? String(args.skip) : undefined,
             $select: args.select,
             $orderby: args.orderBy,
@@ -238,8 +240,10 @@ export function registerBtpTools(server: McpServer, config: AppConfig, name: (n:
         const maxRows = args.maxRows ?? 100;
         const returned = rows.slice(0, maxRows);
         const skip = args.skip ?? 0;
-        // more rows exist when the service filled the page, or when $count says so
-        const hasMore = rows.length > returned.length || (inlineCount !== undefined && skip + returned.length < inlineCount);
+        // the page the service was asked for: when it answers with exactly that many rows and no
+        // $count, the next page may well exist, so hasMore must not read false
+        const asked = args.top ?? 50;
+        const hasMore = rows.length > returned.length || rows.length >= asked || (inlineCount !== undefined && skip + returned.length < inlineCount);
         return json({
           source: target.source,
           appliedUrl: url,

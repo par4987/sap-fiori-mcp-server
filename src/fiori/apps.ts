@@ -66,7 +66,11 @@ export function summarizeApp(appDir: string, relPath: string): FioriAppSummary |
 
   let type: FioriAppSummary["type"] = "freestyle";
   const usesFeV4 = Object.values(targets).some((t) => String(t["name"] ?? "").startsWith("sap.fe.templates"));
-  const usesFeV2 = String(rootView?.["viewName"] ?? "").startsWith("sap.suite.ui.generic.template") || Object.values(targets).some((t) => String(t["name"] ?? "").startsWith("sap.suite.ui.generic.template"));
+  // a V2 FE app wears its shape under sap.ui.generic.app (pages tree), not on any routing target
+  const usesFeV2 =
+    sapUi5["sap.ui.generic.app"] !== undefined ||
+    String(rootView?.["viewName"] ?? "").startsWith("sap.suite.ui.generic.template") ||
+    Object.values(targets).some((t) => String(t["name"] ?? "").startsWith("sap.suite.ui.generic.template"));
   if (sapApp["type"] === "card") type = "card";
   else if (String(sapApp["id"] ?? "").includes(".variant") || exists(path.join(appDir, "manifest.appdescr_variant"))) type = "adaptation";
   else if (usesFeV4) type = "fiori-elements-v4";

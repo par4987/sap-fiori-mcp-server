@@ -91,8 +91,8 @@ export function getProjectInfo(projectPath: string): ProjectInfo {
     }
   }
 
-  const ui5YamlPath = ["ui5.yaml", path.join(single ?? "", "ui5.yaml")].find((p) => exists(p));
-  if (ui5YamlPath) info.ui5Yaml = path.resolve(ui5YamlPath);
+  const ui5YamlPath = [path.join(root, "ui5.yaml"), single ? path.join(single, "ui5.yaml") : undefined].filter((p): p is string => !!p).find((p) => exists(p));
+  if (ui5YamlPath) info.ui5Yaml = ui5YamlPath;
 
   if (pkg) {
     info.packageScripts = Object.keys(pkg.scripts ?? {});

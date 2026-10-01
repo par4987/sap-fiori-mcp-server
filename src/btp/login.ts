@@ -63,10 +63,16 @@ function openBrowser(url: string): void {
         detached: true,
         stdio: "ignore",
         windowsHide: true
-      }).unref();
+      })
+        // a missing powershell.exe surfaces asynchronously, not at spawn() — without this the
+        // event is an uncaughtException that kills the whole server process
+        .on("error", () => undefined)
+        .unref();
       return;
     }
-    spawn(process.platform === "darwin" ? "open" : "xdg-open", [url], { detached: true, stdio: "ignore" }).unref();
+    spawn(process.platform === "darwin" ? "open" : "xdg-open", [url], { detached: true, stdio: "ignore" })
+      .on("error", () => undefined)
+      .unref();
   } catch {
     /* the caller prints the URL regardless */
   }

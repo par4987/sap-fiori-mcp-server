@@ -1,4 +1,5 @@
 import http from "node:http";
+import crypto from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { AppConfig } from "./config.js";
@@ -32,6 +33,7 @@ export function isOriginAllowed(origin: string | undefined, config: AppConfig): 
 /** Stateless HTTP Streamable transport: each request gets its own server+transport pair. */
 export function startHttpServer(config: AppConfig): Promise<http.Server> {
   const httpServer = http.createServer(async (req, res) => {
+    try {
     const origin = req.headers.origin as string | undefined;
 
     if (!isOriginAllowed(origin, config)) {
@@ -76,7 +78,11 @@ export function startHttpServer(config: AppConfig): Promise<http.Server> {
       const provided =
         (req.headers["x-api-key"] as string | undefined) ||
         (req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7) : undefined);
-      if (provided !== config.apiKey) {
+      // hash both sides first: timingSafeEqual refuses unequal lengths, and leaking the key length
+      // is already an oracle
+      const a = crypto.createHash("sha256").update(provided ?? "").digest();
+      const b = crypto.createHash("sha256").update(config.apiKey).digest();
+      if (!crypto.timingSafeEqual(a, b)) {
         res.writeHead(401, { "content-type": "application/json" });
         res.end(JSON.stringify({ error: "Unauthorized: missing or invalid API key (x-api-key header or Authorization: Bearer)" }));
         return;
@@ -105,6 +111,17 @@ export function startHttpServer(config: AppConfig): Promise<http.Server> {
         res.writeHead(500, { "content-type": "application/json" });
       }
       res.end(JSON.stringify({ error: "Internal server error" }));
+    }
+    } catch (error) {
+      // anything before the inner try (e.g. a malformed Host header breaking `new URL`) must not
+      // escape: an unhandled rejection in a request handler would take the whole process down
+      logger.error("HTTP request failed badly", error);
+      try {
+        if (!res.headersSent) res.writeHead(500, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Internal server error" }));
+      } catch {
+        /* socket already gone */
+      }
     }
   });
 

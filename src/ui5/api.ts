@@ -17,6 +17,9 @@ const DEFAULT_CDN = "https://cdn.jsdelivr.net/npm/@openui5/ts-types-esm";
 export function libraryOf(controlName: string): string | null {
   const parts = controlName.split(".");
   if (parts.length < 3) return null; // e.g. sap.m.Table → sap.m = library
+  // the types are published per library, and libraries are nested: sap.ui.layout.form.SimpleForm
+  // lives in types/sap.ui.layout.d.ts. Try the longest prefix that looks like a library first.
+  if (parts[0] === "sap" && parts[1] === "ui" && parts.length >= 3) return parts.slice(0, 3).join(".");
   return parts.slice(0, 2).join(".");
 }
 

@@ -63,7 +63,8 @@ export function validateManifest(appPathOrManifest: string): ValidationResult {
         if (v && !["2.0", "4.0"].includes(v)) issues.push({ severity: "error", rule: "dataSource.odataVersion", message: `dataSources/${name}: odataVersion must be 2.0 or 4.0`, path: `sap.app/dataSources/${name}` });
         if (!d["uri"] && !settings["localUri"]) issues.push({ severity: "warning", rule: "dataSource.uri", message: `dataSources/${name} has no uri/localUri`, path: `sap.app/dataSources/${name}` });
         const uri = String(d["uri"] ?? "");
-        if (uri && !uri.endsWith("/") && !uri.includes(".svc") && !uri.includes("$")) {
+        // a uri with a query string is finished as-is; only a bare path needs the trailing slash
+        if (uri && !uri.endsWith("/") && !uri.includes(".svc") && !uri.includes("$") && !uri.includes("?")) {
           issues.push({ severity: "warning", rule: "dataSource.uri.trailing-slash", message: `dataSources/${name} uri '${uri}' usually ends with '/': UI5 appends the entity set to it`, path: `sap.app/dataSources/${name}` });
         }
       }
@@ -104,16 +105,13 @@ export function validateManifest(appPathOrManifest: string): ValidationResult {
       if (model["type"] === "sap.ui.model.resource.ResourceModel") {
         const bundleName = (model["settings"] as Record<string, unknown>)?.["bundleName"];
         if (typeof bundleName === "string") {
-          const rel = bundleName.replace(/\./g, "/");
+          // UI5 resolves a bundle against the app id: <appId>.i18n.i18n lives at
+          // webapp/i18n/i18n.properties, so drop the app-id prefix before turning dots into dirs
+          const rel = (appId && bundleName.startsWith(`${appId}.`) ? bundleName.slice(appId.length + 1) : bundleName).replace(/\./g, "/");
           const segments = rel.split("/");
-          // candidates: full namespace path and the suffix path (webapp root maps to the app namespace)
-          const candidates = [
-            path.join(webappDir, ...segments.map((seg) => `${seg}.properties`)),
-            path.join(webappDir, ...segments.slice(-3).map((seg) => `${seg}.properties`)),
-            path.join(webappDir, "i18n", `${segments[segments.length - 1]}.properties`)
-          ];
+          const candidates = [path.join(webappDir, rel + ".properties"), path.join(webappDir, ...segments.slice(0, -1), `${segments[segments.length - 1]}.properties`)];
           if (!candidates.some((c) => exists(c))) {
-            issues.push({ severity: "error", rule: "models.i18n.bundle", message: `i18n bundle '${bundleName}' not found on disk (tried ${candidates.map((c) => relativePath(c, root)).join(", ")})`, path: `sap.ui5/models/${name}` });
+            issues.push({ severity: "error", rule: "models.i18n.bundle", message: `i18n bundle '${bundleName}' not found on disk (expected ${candidates.map((c) => relativePath(c, root)).join(" or ")})`, path: `sap.ui5/models/${name}` });
           }
         }
       }

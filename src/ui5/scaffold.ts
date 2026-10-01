@@ -61,7 +61,7 @@ export function ui5Manifest(o: Ui5AppOptions): string {
       "targets": {
         "main": { "viewName": "Main", "viewId": "main", "controlAggregation": "pages" }
       }`;
-  const usesFcl = o.template === "fcl" || o.template === "master-detail";
+  const usesFcl = o.template === "fcl";
   const odataModel =
     !usesData
       ? ""
@@ -157,19 +157,15 @@ export function ui5ComponentJs(o: Ui5AppOptions): string {
 }
 
 export function ui5AppView(o: Ui5AppOptions): string {
-  if (o.template === "master-detail" || o.template === "fcl") {
+  if (o.template === "fcl") {
+    // the router owns the columns: embedding static XMLViews here would duplicate the instances
+    // its targets create in the very same aggregations
     return `<mvc:View xmlns:mvc="sap.ui.core.mvc" xmlns:f="sap.f" displayBlock="true">
-  <f:FlexibleColumnLayout id="layout" layout="TwoColumnsMidExpanded">
-    <f:beginColumnPages>
-      <mvc:XMLView id="master" viewName="${appIdOf(o.namespace, o.name)}.view.Master"/>
-    </f:beginColumnPages>
-    <f:midColumnPages>
-      <mvc:XMLView id="detail" viewName="${appIdOf(o.namespace, o.name)}.view.Detail"/>
-    </f:midColumnPages>
-  </f:FlexibleColumnLayout>
+  <f:FlexibleColumnLayout id="layout" layout="TwoColumnsMidExpanded"/>
 </mvc:View>
 `;
   }
+  // master-detail is a plain sap.m.App: two pages, its router pushes Master then Detail
   return `<mvc:View xmlns:mvc="sap.ui.core.mvc" xmlns="sap.m" displayBlock="true">
   <App id="app"/>
 </mvc:View>
@@ -207,7 +203,7 @@ export function ui5MainView(o: Ui5AppOptions): { name: string; content: string }
 `
       },
       {
-        name: "view/Main.controller.js",
+        name: "controller/Main.controller.js",
         content: `sap.ui.define(["sap/ui/core/mvc/Controller", "sap/m/MessageToast"], function (Controller, MessageToast) {
   "use strict";
 
@@ -255,7 +251,7 @@ export function ui5MainView(o: Ui5AppOptions): { name: string; content: string }
 `
       },
       {
-        name: "view/Main.controller.js",
+        name: "controller/Main.controller.js",
         content: `sap.ui.define(["sap/ui/core/mvc/Controller", "sap/m/MessageToast"], function (Controller, MessageToast) {
   "use strict";
 
@@ -292,7 +288,7 @@ export function ui5MainView(o: Ui5AppOptions): { name: string; content: string }
 `
       },
       {
-        name: "view/Worklist.controller.js",
+        name: "controller/Worklist.controller.js",
         content: `sap.ui.define(["sap/ui/core/mvc/Controller", "sap/ui/model/Filter", "sap/ui/model/FilterOperator"], function (Controller, Filter, FilterOperator) {
   "use strict";
 
@@ -327,7 +323,7 @@ export function ui5MainView(o: Ui5AppOptions): { name: string; content: string }
 `
       },
       {
-        name: "view/Object.controller.js",
+        name: "controller/Object.controller.js",
         content: `sap.ui.define(["sap/ui/core/mvc/Controller"], function (Controller) {
   "use strict";
 
@@ -357,13 +353,16 @@ export function ui5MainView(o: Ui5AppOptions): { name: string; content: string }
 `
     },
     {
-      name: "view/Master.controller.js",
+      name: "controller/Master.controller.js",
       content: `sap.ui.define(["sap/ui/core/mvc/Controller"], function (Controller) {
   "use strict";
 
   return Controller.extend("${appId}.controller.Master", {
     onSelect: function (oEvent) {
-      this.getRouter().navTo("detail", { objectId: oEvent.getSource().getBindingContext().getProperty("ID") });
+      // selectionChange carries the row in 'listItem'; getSource() is the List itself and has
+      // no binding context to navigate with
+      const path = oEvent.getParameter("listItem").getBindingContext().getPath();
+      this.getRouter().navTo("detail", { objectId: encodeURIComponent(path.replace(/^\//, "")) });
     },
     getRouter: function () {
       return this.getOwnerComponent().getRouter();
@@ -386,7 +385,7 @@ export function ui5MainView(o: Ui5AppOptions): { name: string; content: string }
 `
     },
     {
-      name: "view/Detail.controller.js",
+      name: "controller/Detail.controller.js",
       content: `sap.ui.define(["sap/ui/core/mvc/Controller"], function (Controller) {
   "use strict";
 
@@ -464,12 +463,15 @@ export function ui5IndexHtml(o: Ui5AppOptions): string {
     data-sap-ui-compat-version="edge"
     data-sap-ui-libraries="${libs}"
     data-sap-ui-async="true"
+    data-sap-ui-oninit="module:sap/ui/core/ComponentSupport"
     data-sap-ui-resourceroots='{ "${appId}": "./" }'>
   </script>
   <link rel="stylesheet" type="text/css" href="css/style.css">
 </head>
 <body class="sapUiBody" id="content">
-  <div data-sap-ui-component data-sap-ui-component-name="${appId}" id="root"></div>
+  <!-- ComponentSupport reads data-name/data-id/data-settings; without declaring the module
+       the div is inert markup and nothing ever mounts -->
+  <div data-sap-ui-component data-name="${appId}" data-id="container" data-settings='{"id": "${appId}"}' id="root"></div>
 </body>
 </html>
 `;
@@ -594,7 +596,7 @@ export function createIntegrationCard(targetPath: string, o: { name: string; car
       "title": "${o.title ?? o.name}",
       "subtitle": "Sample card",
       "data": { "request": { "url": "${dataUrl}" }, "path": "d/results" },
-      "mainIndicator": { "number": "{length(path)}", "unit": "items" }
+      "mainIndicator": { "number": "{= $\{d/results}.length }", "unit": "items" }
     },
     ${contentByType[o.cardType] ?? contentByType["List"]}
   }

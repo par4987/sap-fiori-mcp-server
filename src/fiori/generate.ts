@@ -15,8 +15,13 @@ import { logger } from "../logger.js";
  */
 export function normalizeAppId(input: string, appName: string): { namespace: string; appId: string } {
   let ns = (input || "ns").trim().toLowerCase().replace(/[^a-z0-9.]/g, "");
+  // segments may not be empty or digit-starting: 'a..b' down to '..' is not a namespace
+  ns = ns
+    .split(".")
+    .map((seg) => (seg && /^\d/.test(seg) ? `n${seg}` : seg))
+    .filter(Boolean)
+    .join(".");
   if (!ns) ns = "ns";
-  if (/^\d/.test(ns)) ns = `ns.${ns}`;
   let name = (appName || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
   if (!name) name = "app";
   // a segment starting with a digit is legal deeper in the id, but reads as a mistake
@@ -287,7 +292,13 @@ export async function generateFioriApp(params: {
     params.odataVersion ?? (metadataXml ? parseEdmx(metadataXml).version : "4.0");
 
   const requestedFloorplan: Floorplan = params.floorplan ?? "list-report";
-  const floorplan = resolveFloorplan(requestedFloorplan, odataVersion, warnings);
+  let floorplan = resolveFloorplan(requestedFloorplan, odataVersion, warnings);
+  if (parameters && floorplan === "object-page") {
+    // a parameterised entity has no bindings for an Object Page — degrade to the list-report
+    // that does work, so the app opens instead of erroring on a page named after parameters
+    warnings.push("object-page is not supported for a CDS with parameters; generated as list-report instead.");
+    floorplan = "list-report";
+  }
   if (floorplan === "overview-page") {
     // measured, not assumed: the generated page loads sap.ovp and renders its card skeletons, and
     // the cards never bind. A real overview page describes each card with an annotation path of its
@@ -331,6 +342,16 @@ export async function generateFioriApp(params: {
     }
     return { name: safe, uri, localUri: `localService/${safe}.xml`, xml: a.xml };
   });
+  // two documents whose sanitised names collide (e.g. ZVAN A and ZVAN_A) must not overwrite one
+  // another: give the later ones a suffix that is itself unused
+  const usedNames = new Set<string>();
+  for (const f of annotationFiles) {
+    let candidate = f.name;
+    for (let n = 2; usedNames.has(candidate); n++) candidate = `${f.name}_${n}`;
+    f.name = candidate;
+    f.localUri = `localService/${candidate}.xml`;
+    usedNames.add(candidate);
+  }
 
   /**
    * What an overview page card puts on each line.

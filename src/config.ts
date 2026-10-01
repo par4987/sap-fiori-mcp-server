@@ -43,7 +43,7 @@ export interface AppConfig {
 }
 
 export const SERVER_NAME = "@pired/sap-fiori-mcp-server";
-export const SERVER_VERSION = "1.28.0";
+export const SERVER_VERSION = "1.29.0";
 
 function env(name: string, fallback = ""): string {
   return (process.env[name] ?? fallback).trim();
@@ -52,6 +52,12 @@ function env(name: string, fallback = ""): string {
 function num(raw: string, fallback: number, min = 1): number {
   const n = Number.parseInt(raw, 10);
   return Number.isFinite(n) && n >= min ? n : fallback;
+}
+
+/** Common truthy parsing: any non-empty word other than 0/false/no/off means "on". */
+function envBool(name: string): boolean {
+  const v = env(name).toLowerCase();
+  return !!v && v !== "0" && v !== "false" && v !== "no" && v !== "off";
 }
 
 function splitList(raw: string): string[] {
@@ -63,7 +69,8 @@ function splitList(raw: string): string[] {
 
 function expandHome(p: string): string {
   if (p === "~") return os.homedir();
-  if (p.startsWith("~/")) return path.join(os.homedir(), p.slice(2));
+  // Windows users write ~\ too; PowerShell does not expand it for us here
+  if (p.startsWith("~/") || p.startsWith("~\\")) return path.join(os.homedir(), p.slice(2));
   return p;
 }
 
@@ -124,7 +131,10 @@ export function loadConfig(argv: string[] = process.argv.slice(2)): AppConfig {
   systems.push(...readSystemsFile(env("SAP_SYSTEMS_FILE", path.join(dataDir, "systems.json")), configWarnings));
   if (env("SAP_BASE_URL")) {
     const name = env("SAP_SYSTEM_NAME", "default");
-    if (!systems.some((s) => s.name === name)) {
+    if (systems.some((s) => s.name === name)) {
+      // the silent version of this caused endless 401 hunts: the env values were simply not used
+      configWarnings.push(`SAP_BASE_URL/SAP_USER were set but '${name}' already exists in the systems file — the file wins. Rename either to use both.`);
+    } else {
       systems.push({
         name,
         url: env("SAP_BASE_URL"),
@@ -161,6 +171,6 @@ export function loadConfig(argv: string[] = process.argv.slice(2)): AppConfig {
     sapSystems: systems,
     requestTimeoutMs: num(env("SAP_FIORI_MCP_TIMEOUT_MS", "30000"), 30000, 1000),
     configWarnings,
-    noResources: !!env("SAP_FIORI_MCP_RESPONSE_NO_RESOURCES")
+    noResources: envBool("SAP_FIORI_MCP_RESPONSE_NO_RESOURCES")
   };
 }

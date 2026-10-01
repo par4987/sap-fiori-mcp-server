@@ -116,7 +116,16 @@ export function runUi5Linter(projectPath: string, options?: { files?: string[] }
     const cnMatch = /controllerName="([^"]+)"/.exec(content);
     if (cnMatch) {
       const controllerPath = cnMatch[1].replace(/\./g, "/");
-      const candidates = [path.join(webappDir, `${controllerPath}.controller.js`), path.join(webappDir, `${controllerPath}.js`), path.join(webappDir, `${controllerPath}.controller.ts`)];
+      const leaf = cnMatch[1].split(".").pop()!;
+      const candidates = [
+        path.join(webappDir, `${controllerPath}.controller.js`),
+        path.join(webappDir, `${controllerPath}.js`),
+        path.join(webappDir, `${controllerPath}.controller.ts`),
+        // declared as <appId>.controller.Main but lives under webapp/controller/: the app id
+        // prefix maps to webapp/, not to a folder named after it
+        path.join(webappDir, "controller", `${leaf}.controller.js`),
+        path.join(webappDir, "controller", `${leaf}.controller.ts`)
+      ];
       if (!candidates.some((c) => fs.existsSync(c))) {
         issues.push({ severity: "error", file: relativePath(file, root), rule: "xml.controller.missing", message: `controllerName '${cnMatch[1]}' has no matching controller file` });
       }

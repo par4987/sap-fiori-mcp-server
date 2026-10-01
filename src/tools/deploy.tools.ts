@@ -1,4 +1,5 @@
 import { z } from "zod";
+import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { AppConfig } from "../config.js";
 import { deployFioriApp } from "../deploy/index.js";
@@ -93,7 +94,12 @@ export function registerDeployTools(
         }
         const result = await deployFioriApp({
           config,
-          appPath: args.appPath,
+          // the description promises an absolute path; refuse a relative one rather than resolving
+          // it against the MCP server's cwd, which the caller cannot predict
+          appPath: (() => {
+            if (!path.isAbsolute(args.appPath)) throw new Error(`appPath must be absolute (e.g. C:\\proj\\app or /home/me/app); got '${args.appPath}'.`);
+            return args.appPath;
+          })(),
           destination: args.destination,
           systemName: args.systemName,
           bspName: args.bspName,
