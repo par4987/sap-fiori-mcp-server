@@ -23,7 +23,7 @@ export const paginationShape = {
 
 // --- docs -------------------------------------------------------------------
 
-export const searchDocsOutput = {
+export const searchDocsOutput = loose({
   query: z.string(),
   scope: z.string(),
   ...paginationShape,
@@ -38,13 +38,13 @@ export const searchDocsOutput = {
       body: z.string()
     })
   )
-};
+});
 
-export const guidelinesOutput = {
+export const guidelinesOutput = loose({
   topic: z.string().optional(),
   title: z.string(),
   content: z.string()
-};
+});
 
 // --- fiori ------------------------------------------------------------------
 
@@ -59,28 +59,28 @@ export const appSummary = loose({
   hasFcl: z.boolean()
 });
 
-export const listFioriAppsOutput = {
+export const listFioriAppsOutput = loose({
   path: z.string(),
   name: z.string(),
   apps: z.array(appSummary),
   isCap: z.boolean(),
   hasPackageJson: z.boolean(),
   cdsFolders: loose({ db: z.boolean(), srv: z.boolean(), app: z.boolean() })
-};
+});
 
-export const listSapSystemsOutput = {
+export const listSapSystemsOutput = loose({
   count: z.number().int(),
   systems: z.array(
     loose({ name: z.string(), url: z.string(), client: z.string().optional(), authType: z.string(), user: z.string().optional() })
   ),
   warnings: z.array(z.string()).optional().describe("Configuration problems, e.g. a systems.json that could not be parsed"),
   hint: z.string()
-};
+});
 
 const entitySetSchema = loose({ name: z.string(), entityType: z.string().optional() });
 const entityTypeSchema = loose({ name: z.string(), keys: z.array(z.string()).optional() });
 
-export const metadataOutput = {
+export const metadataOutput = loose({
   savedTo: z.string().optional(),
   sourceUrl: z.string().optional(),
   odataVersion: z.string(),
@@ -91,9 +91,9 @@ export const metadataOutput = {
   annotationTargetCount: z.number().optional().describe("Total before the slice, so a client knows when skipping would miss some"),
   annotations: z.array(z.unknown()).optional(),
   annotationsTotal: z.number().optional()
-};
+});
 
-export const generateAppOutput = {
+export const generateAppOutput = loose({
   appPath: z.string(),
   createdFiles: z.array(z.string()),
   warnings: z.array(z.string()),
@@ -101,7 +101,7 @@ export const generateAppOutput = {
   resolvedService: z.string().nullable().optional(),
   resolvedEntitySet: z.string().optional(),
   serviceUri: z.string().optional()
-};
+});
 
 const parameterSchema = loose({ name: z.string(), type: z.string(), required: z.boolean(), description: z.string() });
 
@@ -112,27 +112,27 @@ const functionalitySchema = loose({
   parameters: z.array(parameterSchema)
 });
 
-export const listFunctionalityOutput = {
+export const listFunctionalityOutput = loose({
   app: appSummary,
   functionalities: z.array(functionalitySchema)
-};
+});
 
-export const functionalityDetailsOutput = {
+export const functionalityDetailsOutput = loose({
   id: z.string(),
   title: z.string(),
   description: z.string(),
   parameters: z.array(parameterSchema)
-};
+});
 
-export const executeFunctionalityOutput = {
+export const executeFunctionalityOutput = loose({
   changed: z.array(z.string()),
   created: z.array(z.string()),
   message: z.string()
-};
+});
 
 // --- deploy -----------------------------------------------------------------
 
-export const deployAppOutput = {
+export const deployAppOutput = loose({
   ok: z.boolean().describe("True when the application answers HTTP 200 on its public URL"),
   stage: z
     .enum(["resolve-target", "validate", "build", "archive", "deploy", "verify"])
@@ -179,24 +179,24 @@ export const deployAppOutput = {
   sapMessage: z.string().optional().describe("The system's own message about the upload"),
   warnings: z.array(z.string()),
   nextSteps: z.array(z.string())
-};
+});
 
 // --- ui5 --------------------------------------------------------------------
 
-export const scaffoldOutput = {
+export const scaffoldOutput = loose({
   appPath: z.string(),
   createdFiles: z.array(z.string()),
   nextSteps: z.array(z.string()).optional()
-};
+});
 
-export const apiReferenceOutput = {
+export const apiReferenceOutput = loose({
   control: z.string(),
   version: z.string(),
   reference: z.string(),
   truncated: z.boolean()
-};
+});
 
-export const projectInfoOutput = {
+export const projectInfoOutput = loose({
   path: z.string(),
   name: z.string(),
   kind: z.string(),
@@ -214,33 +214,33 @@ export const projectInfoOutput = {
   packageScripts: z.array(z.string()).optional(),
   cdsServices: z.array(z.string()).optional(),
   apps: z.array(loose({ path: z.string(), id: z.string(), type: z.string() })).optional()
-};
+});
 
-export const versionInfoOutput = {
+export const versionInfoOutput = loose({
   distribution: z.string(),
   latest: z.string().nullable(),
   libraries: z.array(loose({ name: z.string(), version: z.string() })).optional(),
   localProjectVersion: z.string().nullable().optional(),
   source: z.string(),
   note: z.string().optional()
-};
+});
 
-export const manifestValidationOutput = {
+export const manifestValidationOutput = loose({
   valid: z.boolean(),
   errors: z.number().int(),
   warnings: z.number().int(),
   issues: z.array(loose({ severity: z.string(), rule: z.string(), message: z.string(), path: z.string().optional() })),
   manifestPath: z.string()
-};
+});
 
-export const linterOutput = {
+export const linterOutput = loose({
   issues: z.array(loose({ severity: z.string(), file: z.string(), line: z.number().optional(), rule: z.string(), message: z.string() })),
   filesScanned: z.number().int()
-};
+});
 
 // --- cap --------------------------------------------------------------------
 
-export const searchModelOutput = {
+export const searchModelOutput = loose({
   sourcesParsed: z.number().int(),
   namespaces: z.array(z.string()),
   totalDefinitions: z.number().int(),
@@ -255,9 +255,9 @@ export const searchModelOutput = {
       line: z.number()
     })
   )
-};
+});
 
-export const capDetailsOutput = {
+export const capDetailsOutput = loose({
   name: z.string(),
   shortName: z.string(),
   kind: z.string(),
@@ -293,9 +293,9 @@ export const capDetailsOutput = {
     )
     .optional(),
   exposedByServices: z.array(loose({ service: z.string(), exposed: z.array(z.unknown()) }))
-};
+});
 
-export const queryCapDataOutput = {
+export const queryCapDataOutput = loose({
   file: z.string(),
   columns: z.array(z.string()),
   rows: z.array(row),
@@ -305,28 +305,28 @@ export const queryCapDataOutput = {
   limit: z.number().int(),
   hasMore: z.boolean(),
   nextSkip: z.number().int().nullable().describe("Value to pass as skip on the next call, or null")
-};
+});
 
 // --- btp --------------------------------------------------------------------
 
 const destinationSchema = loose({ name: z.string(), url: z.string(), authType: z.string(), source: z.string() });
 
-export const listDestinationsOutput = {
+export const listDestinationsOutput = loose({
   count: z.number().int(),
   destinations: z.array(destinationSchema),
   destinationServiceConfigured: z.boolean(),
   destinationService: loose({ count: z.number().int(), destinations: z.array(destinationSchema) }).optional(),
   destinationServiceError: z.string().optional(),
   hint: z.string()
-};
+});
 
-export const getDestinationOutput = {
+export const getDestinationOutput = loose({
   destination: destinationSchema,
   auth: row,
   usage: row
-};
+});
 
-export const btpLoginOutput = {
+export const btpLoginOutput = loose({
   destination: z.string(),
   pending: z.boolean().describe("True when the browser is open and the login has not come back yet; call the tool again to collect the outcome"),
   signedIn: z.boolean(),
@@ -336,9 +336,9 @@ export const btpLoginOutput = {
   sealed: z.string().describe("How the refresh token was stored: 'dpapi' on Windows, 'plain' elsewhere"),
   sealError: z.string().optional().describe("Set when sealing failed and the token was stored in the clear"),
   detail: z.string()
-};
+});
 
-export const queryODataOutput = {
+export const queryODataOutput = loose({
   source: z.string(),
   appliedUrl: z.string(),
   odataVersion: z.string().describe("Convention used to request the total: '4.0' ($count) or '2.0' ($inlinecount)"),
@@ -351,4 +351,4 @@ export const queryODataOutput = {
   hasMore: z.boolean(),
   nextSkip: z.number().int().nullable().describe("Value to pass as skip on the next call, or null"),
   destination: row.optional()
-};
+});

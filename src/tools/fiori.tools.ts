@@ -1,6 +1,6 @@
 import { z } from "zod";
 import path from "node:path";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import type { AppConfig } from "../config.js";
 import { listFioriApps } from "../fiori/apps.js";
 import { buildCdsModel, getServiceExposure } from "../cap/model.js";
@@ -47,10 +47,10 @@ export function registerFioriTools(server: McpServer, config: AppConfig, name: (
       description:
         "Scans a directory for existing SAP Fiori applications (Fiori elements V2/V4, freestyle, cards, adaptation projects) that can be modified. " +
         "Returns app id, type, entity set, OData version and view files. Call this before modifying an app.",
-      inputSchema: {
-        workspacePath: z.string().optional().describe("Root folder to scan (default: workspace root / cwd)"),
-        maxDepth: z.number().int().min(1).max(10).default(6).describe("Folder recursion depth")
-      },
+      inputSchema: z.object({
+              workspacePath: z.string().optional().describe("Root folder to scan (default: workspace root / cwd)"),
+              maxDepth: z.number().int().min(1).max(10).default(6).describe("Folder recursion depth")
+            }),
       outputSchema: listFioriAppsOutput,
       annotations: READ_LOCAL
     },
@@ -63,7 +63,6 @@ export function registerFioriTools(server: McpServer, config: AppConfig, name: (
       }
     }
   );
-
   server.registerTool(
     name("list_sap_systems"),
     {
@@ -71,7 +70,7 @@ export function registerFioriTools(server: McpServer, config: AppConfig, name: (
       description:
         "Lists SAP system connections available for OData calls (from env vars SAP_BASE_URL/SAP_USER/SAP_PASSWORD, SAP_SYSTEMS_JSON or the systems.json file). " +
         "Use the returned system name with download_odata_service_metadata.",
-      inputSchema: {},
+      inputSchema: z.object({}),
       outputSchema: listSapSystemsOutput,
       annotations: READ_LOCAL
     },
@@ -101,7 +100,6 @@ export function registerFioriTools(server: McpServer, config: AppConfig, name: (
       }
     }
   );
-
   server.registerTool(
     name("download_odata_service_metadata"),
     {
@@ -110,13 +108,13 @@ export function registerFioriTools(server: McpServer, config: AppConfig, name: (
         "Downloads the $metadata EDMX document of an OData service (V2 or V4) and saves it as localService/metadata.xml (or a custom path). " +
         "Provide serviceUrl directly, or a systemName from list_sap_systems plus servicePath, or a BTP destination (destination + optional servicePath). " +
         "Returns a summary of entity sets and types.",
-      inputSchema: {
-        serviceUrl: z.string().optional().describe("Full OData service URL, e.g. https://host:port/sap/opu/odata4/sap/my_v4_service?sap-client=000"),
-        systemName: z.string().optional().describe("Name of a configured SAP system (see list_sap_systems)"),
-        destination: z.string().optional().describe("BTP destination name (see list_btp_destinations) — auth headers are applied automatically"),
-        servicePath: z.string().optional().describe("Service path relative to the system/destination URL, e.g. /sap/opu/odata/sap/SEPMRA_PROD_MAN"),
-        savePath: z.string().optional().describe("Where to save metadata.xml (default: <workspace>/metadata.xml)")
-      },
+      inputSchema: z.object({
+              serviceUrl: z.string().optional().describe("Full OData service URL, e.g. https://host:port/sap/opu/odata4/sap/my_v4_service?sap-client=000"),
+              systemName: z.string().optional().describe("Name of a configured SAP system (see list_sap_systems)"),
+              destination: z.string().optional().describe("BTP destination name (see list_btp_destinations) — auth headers are applied automatically"),
+              servicePath: z.string().optional().describe("Service path relative to the system/destination URL, e.g. /sap/opu/odata/sap/SEPMRA_PROD_MAN"),
+              savePath: z.string().optional().describe("Where to save metadata.xml (default: <workspace>/metadata.xml)")
+            }),
       outputSchema: metadataOutput,
       annotations: WRITE_REMOTE
     },
@@ -181,7 +179,6 @@ export function registerFioriTools(server: McpServer, config: AppConfig, name: (
       "Floorplan: 'list-report' (LR+ObjectPage, V4+V2), 'object-page' (form entry, V4), 'worklist' (task list, V4+V2), " +
         "'analytical-list-page' (V2) or 'overview-page' (V2). Unsupported combos are auto-adjusted with a warning."
     );
-
   server.registerTool(
     name("generate_fiori_app_odata"),
     {
@@ -190,17 +187,17 @@ export function registerFioriTools(server: McpServer, config: AppConfig, name: (
         "Generates a new SAP Fiori elements application for an OData V2/V4 service, e.g. from RAP. " +
         "Floorplans: 'list-report' (LR+ObjectPage, V4+V2), 'object-page' (form entry, V4), 'worklist' (V4+V2), 'analytical-list-page' (V2), 'overview-page' (V2). " +
         "Provide metadataXmlPath (from download_odata_service_metadata) or metadataXml content, or just entitySet. Creates manifest.json, Component.js, index.html, i18n, ui5.yaml and package.json.",
-      inputSchema: {
-        workspacePath: z.string().optional().describe("Target workspace root; app is created as <workspace>/<appName>/"),
-        metadataXmlPath: z.string().optional().describe("Path to a local metadata.xml"),
-        serviceUrl: z.string().optional().describe("OData service URL to store in the manifest dataSources"),
-        destination: z.string().optional().describe("BTP destination the service belongs to; with servicePath it supplies serviceUrl, so the same arguments that downloaded the metadata also generate the app"),
-        systemName: z.string().optional().describe("Configured SAP system name; with servicePath it supplies serviceUrl"),
-        servicePath: z.string().optional().describe("Service path relative to the destination/system URL, e.g. /sap/opu/odata4/sap/zsb_x/srvd/sap/zsd_x/0001"),
-        odataVersion: z.enum(["2.0", "4.0"]).optional().describe("Force OData version (auto-detected from metadata)"),
-        floorplan: floorplanAllSchema,
-        ...generateCommon
-      },
+      inputSchema: z.object({
+              workspacePath: z.string().optional().describe("Target workspace root; app is created as <workspace>/<appName>/"),
+              metadataXmlPath: z.string().optional().describe("Path to a local metadata.xml"),
+              serviceUrl: z.string().optional().describe("OData service URL to store in the manifest dataSources"),
+              destination: z.string().optional().describe("BTP destination the service belongs to; with servicePath it supplies serviceUrl, so the same arguments that downloaded the metadata also generate the app"),
+              systemName: z.string().optional().describe("Configured SAP system name; with servicePath it supplies serviceUrl"),
+              servicePath: z.string().optional().describe("Service path relative to the destination/system URL, e.g. /sap/opu/odata4/sap/zsb_x/srvd/sap/zsd_x/0001"),
+              odataVersion: z.enum(["2.0", "4.0"]).optional().describe("Force OData version (auto-detected from metadata)"),
+              floorplan: floorplanAllSchema,
+              ...generateCommon
+            }),
       outputSchema: generateAppOutput,
       annotations: WRITE_CREATE
     },
@@ -253,7 +250,6 @@ export function registerFioriTools(server: McpServer, config: AppConfig, name: (
       }
     }
   );
-
   server.registerTool(
     name("generate_fiori_app_cap"),
     {
@@ -261,15 +257,15 @@ export function registerFioriTools(server: McpServer, config: AppConfig, name: (
       description:
         "Generates a new SAP Fiori elements application inside an existing SAP CAP project (app/ folder), based on an entity of the project's CDS model. " +
         "Reads the CDS model to resolve the main entity and its to-many associations, and wires the app to the CAP service.",
-      inputSchema: {
-        capProjectPath: z.string().describe("Root of the CAP project (contains package.json with @sap/cds and db/srv folders)"),
-        serviceName: z.string().optional().describe("CDS service whose entity is exposed (e.g. CatalogService). Auto-detected when omitted."),
-        floorplan: z
-          .enum(FLOORPLANS_V4)
-          .default("list-report")
-          .describe("Floorplan: 'list-report' (LR+ObjectPage), 'object-page' (form entry) or 'worklist'. CAP apps are OData V4."),
-        ...generateCommon
-      },
+      inputSchema: z.object({
+              capProjectPath: z.string().describe("Root of the CAP project (contains package.json with @sap/cds and db/srv folders)"),
+              serviceName: z.string().optional().describe("CDS service whose entity is exposed (e.g. CatalogService). Auto-detected when omitted."),
+              floorplan: z
+                .enum(FLOORPLANS_V4)
+                .default("list-report")
+                .describe("Floorplan: 'list-report' (LR+ObjectPage), 'object-page' (form entry) or 'worklist'. CAP apps are OData V4."),
+              ...generateCommon
+            }),
       outputSchema: generateAppOutput,
       annotations: WRITE_CREATE
     },
@@ -353,7 +349,6 @@ export function registerFioriTools(server: McpServer, config: AppConfig, name: (
       }
     }
   );
-
   server.registerTool(
     name("list_functionality"),
     {
@@ -361,9 +356,9 @@ export function registerFioriTools(server: McpServer, config: AppConfig, name: (
       description:
         "Gets the list of supported modification functionalities for an existing SAP Fiori application: add_page, delete_page, add_controller_extension, enable_fcl, enable_initial_load, update_manifest. " +
         "Workflow: list_functionality → get_functionality_details → execute_functionality.",
-      inputSchema: {
-        appPath: z.string().min(1).describe("Absolute path to the app folder (containing webapp/manifest.json)")
-      },
+      inputSchema: z.object({
+              appPath: z.string().min(1).describe("Absolute path to the app folder (containing webapp/manifest.json)")
+            }),
       outputSchema: listFunctionalityOutput,
       annotations: READ_LOCAL
     },
@@ -379,16 +374,15 @@ export function registerFioriTools(server: McpServer, config: AppConfig, name: (
       }
     }
   );
-
   server.registerTool(
     name("get_functionality_details"),
     {
       title: "Get functionality details (step 2/3)",
       description: "Gets the required parameters and detailed information for a specific functionality before executing it.",
-      inputSchema: {
-        appPath: z.string().describe("Absolute path to the app folder"),
-        functionalityId: z.enum(["add_page", "delete_page", "add_controller_extension", "enable_fcl", "enable_initial_load", "update_manifest"]).describe("Functionality id from list_functionality")
-      },
+      inputSchema: z.object({
+              appPath: z.string().describe("Absolute path to the app folder"),
+              functionalityId: z.enum(["add_page", "delete_page", "add_controller_extension", "enable_fcl", "enable_initial_load", "update_manifest"]).describe("Functionality id from list_functionality")
+            }),
       outputSchema: functionalityDetailsOutput,
       annotations: READ_LOCAL
     },
@@ -400,17 +394,16 @@ export function registerFioriTools(server: McpServer, config: AppConfig, name: (
       }
     }
   );
-
   server.registerTool(
     name("execute_functionality"),
     {
       title: "Execute a modification functionality (step 3/3)",
       description: "Executes a modification on an existing SAP Fiori application: adds/deletes pages, adds controller extensions, enables FCL or initial load, or updates manifest.json properties.",
-      inputSchema: {
-        appPath: z.string().describe("Absolute path to the app folder"),
-        functionalityId: z.enum(["add_page", "delete_page", "add_controller_extension", "enable_fcl", "enable_initial_load", "update_manifest"]).describe("Functionality id"),
-        params: z.record(z.string(), z.unknown()).optional().describe("Parameters required by the functionality (see get_functionality_details)")
-      },
+      inputSchema: z.object({
+              appPath: z.string().describe("Absolute path to the app folder"),
+              functionalityId: z.enum(["add_page", "delete_page", "add_controller_extension", "enable_fcl", "enable_initial_load", "update_manifest"]).describe("Functionality id"),
+              params: z.record(z.string(), z.unknown()).optional().describe("Parameters required by the functionality (see get_functionality_details)")
+            }),
       outputSchema: executeFunctionalityOutput,
       annotations: WRITE_MODIFY
     },
@@ -434,9 +427,9 @@ export function registerFioriTools(server: McpServer, config: AppConfig, name: (
     {
       title: "Summarize a metadata.xml",
       description: "Parses a local EDMX metadata.xml and returns entity sets, entity types, keys, associations and annotation targets.",
-      inputSchema: {
-        metadataXmlPath: z.string().min(1).describe("Path to the metadata.xml file")
-      },
+      inputSchema: z.object({
+              metadataXmlPath: z.string().min(1).describe("Path to the metadata.xml file")
+            }),
       outputSchema: metadataOutput,
       annotations: READ_LOCAL
     },

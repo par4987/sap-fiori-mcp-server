@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import type { AppConfig } from "../config.js";
 import {
   loadDestinations,
@@ -52,9 +52,9 @@ export function registerBtpTools(server: McpServer, config: AppConfig, name: (n:
         "Lists the SAP BTP destinations available for OData calls: local destinations (env var SAP_DESTINATIONS_JSON / SAP_DESTINATIONS_FILE / SAP_DESTINATIONS_DIR) " +
         "and, when configured, destinations of the BTP Destination Service (cloud). Secrets are redacted. " +
         "Use the returned destination names with query_odata_data and download_odata_service_metadata.",
-      inputSchema: {
-        includeDestinationService: z.boolean().default(true).describe("Also fetch destinations from the BTP Destination Service when it is configured (requires network)")
-      },
+      inputSchema: z.object({
+              includeDestinationService: z.boolean().default(true).describe("Also fetch destinations from the BTP Destination Service when it is configured (requires network)")
+            }),
       outputSchema: listDestinationsOutput,
       annotations: READ_REMOTE
     },
@@ -86,7 +86,6 @@ export function registerBtpTools(server: McpServer, config: AppConfig, name: (n:
       }
     }
   );
-
   server.registerTool(
     name("get_btp_destination"),
     {
@@ -94,9 +93,9 @@ export function registerBtpTools(server: McpServer, config: AppConfig, name: (n:
       description:
         "Returns the details of one SAP BTP destination (local or from the BTP Destination Service): URL, authentication type, sap-client, custom headers and proxy type. " +
         "Secrets are redacted. Useful to verify a destination before querying it with query_odata_data.",
-      inputSchema: {
-        name: z.string().min(1).describe("Destination name (see list_btp_destinations)")
-      },
+      inputSchema: z.object({
+              name: z.string().min(1).describe("Destination name (see list_btp_destinations)")
+            }),
       outputSchema: getDestinationOutput,
       annotations: READ_REMOTE
     },
@@ -142,7 +141,6 @@ export function registerBtpTools(server: McpServer, config: AppConfig, name: (n:
       }
     }
   );
-
   server.registerTool(
     name("query_odata_data"),
     {
@@ -151,28 +149,28 @@ export function registerBtpTools(server: McpServer, config: AppConfig, name: (n:
         "Executes an OData query (V2 or V4) against an entity set and returns the rows as JSON. " +
         "Target: a BTP destination (destination + optional servicePath), a configured SAP system (systemName + servicePath from list_sap_systems), or a full serviceUrl. " +
         "Supports $filter, $top, $skip, $select, $orderby, $expand and $count. This is the remote counterpart of query_cap_data.",
-      inputSchema: {
-        entitySet: z.string().describe("Entity set name, e.g. 'Travel' or 'Products'"),
-        destination: z.string().optional().describe("BTP destination name (see list_btp_destinations)"),
-        systemName: z.string().optional().describe("Configured SAP system name (see list_sap_systems)"),
-        servicePath: z.string().optional().describe("Service path relative to the destination/system URL, e.g. /sap/opu/odata4/sap/zui_travel_ov4/srv"),
-        serviceUrl: z.string().optional().describe("Full service URL (used when no destination/system is given)"),
-        filter: z.string().optional().describe("OData $filter, e.g. \"Status eq 'A' and Price gt 100\""),
-        top: z.number().int().min(1).max(1000).optional().describe("$top (max rows returned by the service, default 50)"),
-        skip: z.number().int().min(0).optional().describe("$skip"),
-        select: z.string().optional().describe("$select comma-separated fields"),
-        orderBy: z.string().optional().describe("$orderby, e.g. 'CreatedAt desc'"),
-        expand: z.string().optional().describe("$expand navigation properties, e.g. '_Travel,_Agency'"),
-        count: z.boolean().optional().describe("Ask the service for the total number of rows"),
-        odataVersion: z
-          .enum(["2.0", "4.0"])
-          .optional()
-          .describe(
-            "Service OData version. Only affects how the total is requested: $count=true in V4, $inlinecount=allpages in V2. " +
-              "When omitted, V4 is tried first and V2 is retried automatically if the service rejects it."
-          ),
-        maxRows: z.number().int().min(1).max(500).default(100).describe("Max rows included in the tool output (safety limit)")
-      },
+      inputSchema: z.object({
+              entitySet: z.string().describe("Entity set name, e.g. 'Travel' or 'Products'"),
+              destination: z.string().optional().describe("BTP destination name (see list_btp_destinations)"),
+              systemName: z.string().optional().describe("Configured SAP system name (see list_sap_systems)"),
+              servicePath: z.string().optional().describe("Service path relative to the destination/system URL, e.g. /sap/opu/odata4/sap/zui_travel_ov4/srv"),
+              serviceUrl: z.string().optional().describe("Full service URL (used when no destination/system is given)"),
+              filter: z.string().optional().describe("OData $filter, e.g. \"Status eq 'A' and Price gt 100\""),
+              top: z.number().int().min(1).max(1000).optional().describe("$top (max rows returned by the service, default 50)"),
+              skip: z.number().int().min(0).optional().describe("$skip"),
+              select: z.string().optional().describe("$select comma-separated fields"),
+              orderBy: z.string().optional().describe("$orderby, e.g. 'CreatedAt desc'"),
+              expand: z.string().optional().describe("$expand navigation properties, e.g. '_Travel,_Agency'"),
+              count: z.boolean().optional().describe("Ask the service for the total number of rows"),
+              odataVersion: z
+                .enum(["2.0", "4.0"])
+                .optional()
+                .describe(
+                  "Service OData version. Only affects how the total is requested: $count=true in V4, $inlinecount=allpages in V2. " +
+                    "When omitted, V4 is tried first and V2 is retried automatically if the service rejects it."
+                ),
+              maxRows: z.number().int().min(1).max(500).default(100).describe("Max rows included in the tool output (safety limit)")
+            }),
       outputSchema: queryODataOutput,
       annotations: READ_REMOTE
     },
@@ -276,12 +274,12 @@ export function registerBtpTools(server: McpServer, config: AppConfig, name: (n:
         "Signing in takes longer than an MCP client waits for a tool call, so this returns 'pending' with the URL once the browser is open: " +
         "finish the login there and call it again for the same destination to collect the outcome. " +
         "Set noBrowser to get the URL back instead, for a machine with no browser of its own.",
-      inputSchema: {
-        destination: z.string().describe("Name of the destination to sign in for, as list_btp_destinations reports it"),
-        noBrowser: z.boolean().default(false).describe("Do not open a browser; return the URL to open by hand (over SSH, or in a container)"),
-        waitSeconds: z.number().int().min(0).max(45).default(20).describe("Seconds to hold this call waiting for a fast login before answering 'pending'. An MCP client abandons a tool call after 60 s, so this never goes near that."),
-        timeoutSeconds: z.number().int().min(30).max(600).default(300).describe("How long the login itself stays open in the background, waiting for the browser callback")
-      },
+      inputSchema: z.object({
+              destination: z.string().describe("Name of the destination to sign in for, as list_btp_destinations reports it"),
+              noBrowser: z.boolean().default(false).describe("Do not open a browser; return the URL to open by hand (over SSH, or in a container)"),
+              waitSeconds: z.number().int().min(0).max(45).default(20).describe("Seconds to hold this call waiting for a fast login before answering 'pending'. An MCP client abandons a tool call after 60 s, so this never goes near that."),
+              timeoutSeconds: z.number().int().min(30).max(600).default(300).describe("How long the login itself stays open in the background, waiting for the browser callback")
+            }),
       outputSchema: btpLoginOutput,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
     },

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import type { AppConfig } from "../config.js";
 import { searchAllDocs, guidelines } from "../docs/index.js";
 import { json, err, paginate, READ_LOCAL } from "./index.js";
@@ -13,12 +13,12 @@ export function registerDocTools(server: McpServer, _config: AppConfig, name: (n
       description:
         "Searches the bundled documentation corpora for SAP Fiori elements, UI annotations, UI5 development, OPA5 testing, UI Integration Cards, TypeScript conversion, CAP (CDS) development and SAP BTP destinations. " +
         "Use this before generating or modifying apps to ground answers in current best practices. Local, no network required.",
-      inputSchema: {
-        query: z.string().min(1).describe("Search query, e.g. 'flexible column layout' or 'value help annotation'"),
-        scope: z.enum(["all", "fiori", "ui5", "cap", "opa5", "cards", "typescript", "btp"]).default("all").describe("Restrict to one documentation corpus"),
-        limit: z.number().int().min(1).max(20).default(6).describe("Maximum number of results per page"),
-        offset: z.number().int().min(0).default(0).describe("Number of results to skip (use nextOffset from a previous call)")
-      },
+      inputSchema: z.object({
+              query: z.string().min(1).describe("Search query, e.g. 'flexible column layout' or 'value help annotation'"),
+              scope: z.enum(["all", "fiori", "ui5", "cap", "opa5", "cards", "typescript", "btp"]).default("all").describe("Restrict to one documentation corpus"),
+              limit: z.number().int().min(1).max(20).default(6).describe("Maximum number of results per page"),
+              offset: z.number().int().min(0).default(0).describe("Number of results to skip (use nextOffset from a previous call)")
+            }),
       outputSchema: searchDocsOutput,
       annotations: READ_LOCAL
     },
@@ -52,15 +52,14 @@ export function registerDocTools(server: McpServer, _config: AppConfig, name: (n
       }
     }
   );
-
   server.registerTool(
     name("get_guidelines"),
     {
       title: "Get UI5 development guidelines",
       description: "Returns curated UI5 development best practices for a topic: general, views, bindings, routing, i18n, performance, security, testing.",
-      inputSchema: {
-        topic: z.enum(["general", "views", "bindings", "routing", "i18n", "performance", "security", "testing"]).default("general").describe("Guideline topic")
-      },
+      inputSchema: z.object({
+              topic: z.enum(["general", "views", "bindings", "routing", "i18n", "performance", "security", "testing"]).default("general").describe("Guideline topic")
+            }),
       outputSchema: guidelinesOutput,
       annotations: READ_LOCAL
     },
@@ -75,13 +74,12 @@ export function registerDocTools(server: McpServer, _config: AppConfig, name: (n
       }
     }
   );
-
   server.registerTool(
     name("get_integration_cards_guidelines"),
     {
       title: "Get UI Integration Cards guidelines",
       description: "Returns best practices for developing SAP UI Integration Cards (manifest-driven cards for SAP Build Work Zone).",
-      inputSchema: {},
+      inputSchema: z.object({}),
       outputSchema: guidelinesOutput,
       annotations: READ_LOCAL
     },
@@ -94,13 +92,12 @@ export function registerDocTools(server: McpServer, _config: AppConfig, name: (n
       }
     }
   );
-
   server.registerTool(
     name("get_typescript_conversion_guidelines"),
     {
       title: "Get UI5 JS→TS conversion guidelines",
       description: "Returns the step-by-step guideline for converting UI5 applications and controllers from JavaScript to TypeScript.",
-      inputSchema: {},
+      inputSchema: z.object({}),
       outputSchema: guidelinesOutput,
       annotations: READ_LOCAL
     },

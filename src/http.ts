@@ -1,7 +1,7 @@
 import http from "node:http";
 import crypto from "node:crypto";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
+import { NodeStreamableHTTPServerTransport } from "@modelcontextprotocol/node";
 import type { AppConfig } from "./config.js";
 import { createMcpServer } from "./server.js";
 import { logger } from "./logger.js";
@@ -90,7 +90,7 @@ export function startHttpServer(config: AppConfig): Promise<http.Server> {
     }
 
     // Stateless mode: new transport per request
-    const transport = new StreamableHTTPServerTransport({
+    const transport = new NodeStreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true
     });

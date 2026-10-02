@@ -1,6 +1,6 @@
 import { z } from "zod";
 import path from "node:path";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import type { AppConfig } from "../config.js";
 import { deployFioriApp } from "../deploy/index.js";
 import { validateManifest } from "../ui5/validate.js";
@@ -30,48 +30,48 @@ export function registerDeployTools(
         "system refuses that default — as ABAP Environment does — it finds or creates a package the system accepts, under the " +
         "customer software component, and uploads again on its own. A package that records changes also needs `transport`. " +
         "Run run_manifest_validation first if you want validation alone.",
-      inputSchema: {
-        appPath: z
-          .string()
-          .describe("Absolute path of the generated app folder (the one containing webapp/manifest.json)"),
-        destination: z
-          .string()
-          .optional()
-          .describe("BTP destination holding the target system. Wins over systemName and over inference"),
-        systemName: z
-          .string()
-          .optional()
-          .describe("System from list_sap_systems. Wins over inference from the manifest"),
-        bspName: z
-          .string()
-          .optional()
-          .describe("BSP name (1-15 chars A-Z 0-9 _ , or /namespace/name). Defaults to the app folder name, sanitised"),
-        package: z
-          .string()
-          .optional()
-          .describe("ABAP package to record the application in. Default $TMP (local, no transport); a package the system accepts is found automatically when $TMP is refused"),
-        transport: z
-          .string()
-          .optional()
-          .describe("Transport request number, required when `package` is a transportable (non-$) package"),
-        description: z.string().optional().describe("BSP description, max 60 characters. Defaults to the app title"),
-        skipBuild: z
-          .boolean()
-          .default(false)
-          .describe("Archive webapp/ as it is, without installing @ui5/cli or running ui5 build"),
-        bootstrap: z
-          .enum(["cdn", "local", "keep"])
-          .default("cdn")
-          .describe(
-            "Where index.html loads UI5 from: cdn (ui5.sap.com pinned to the app version), local (the system's own resources, " +
-              "probed first), or keep (leave the existing bootstrap alone)"
-          ),
-        verify: z
-          .boolean()
-          .default(true)
-          .describe("Fetch the public URL after uploading and report the status it answers with"),
-        timeoutMs: z.number().optional().describe("Timeout for build and upload, in milliseconds")
-      },
+      inputSchema: z.object({
+              appPath: z
+                .string()
+                .describe("Absolute path of the generated app folder (the one containing webapp/manifest.json)"),
+              destination: z
+                .string()
+                .optional()
+                .describe("BTP destination holding the target system. Wins over systemName and over inference"),
+              systemName: z
+                .string()
+                .optional()
+                .describe("System from list_sap_systems. Wins over inference from the manifest"),
+              bspName: z
+                .string()
+                .optional()
+                .describe("BSP name (1-15 chars A-Z 0-9 _ , or /namespace/name). Defaults to the app folder name, sanitised"),
+              package: z
+                .string()
+                .optional()
+                .describe("ABAP package to record the application in. Default $TMP (local, no transport); a package the system accepts is found automatically when $TMP is refused"),
+              transport: z
+                .string()
+                .optional()
+                .describe("Transport request number, required when `package` is a transportable (non-$) package"),
+              description: z.string().optional().describe("BSP description, max 60 characters. Defaults to the app title"),
+              skipBuild: z
+                .boolean()
+                .default(false)
+                .describe("Archive webapp/ as it is, without installing @ui5/cli or running ui5 build"),
+              bootstrap: z
+                .enum(["cdn", "local", "keep"])
+                .default("cdn")
+                .describe(
+                  "Where index.html loads UI5 from: cdn (ui5.sap.com pinned to the app version), local (the system's own resources, " +
+                    "probed first), or keep (leave the existing bootstrap alone)"
+                ),
+              verify: z
+                .boolean()
+                .default(true)
+                .describe("Fetch the public URL after uploading and report the status it answers with"),
+              timeoutMs: z.number().optional().describe("Timeout for build and upload, in milliseconds")
+            }),
       outputSchema: deployAppOutput,
       annotations: WRITE_REMOTE
     },

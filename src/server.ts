@@ -1,4 +1,4 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer } from "@modelcontextprotocol/server";
 import type { AppConfig } from "./config.js";
 import { SERVER_NAME, SERVER_VERSION } from "./config.js";
 import { registerDocTools } from "./tools/doc.tools.js";

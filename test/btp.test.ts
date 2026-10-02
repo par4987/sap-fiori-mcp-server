@@ -2,8 +2,7 @@ import { describe, it, expect, afterEach, beforeAll, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { loadConfig, type AppConfig } from "../src/config.js";
 import { createMcpServer } from "../src/server.js";
 import {
