@@ -71,7 +71,8 @@ export async function zipFolder(dir: string, overrides: ZipOverride[] = []): Pro
   } catch (e) {
     // a file vanishing between walk and add must not leave the stream hanging: abort, then throw
     try {
-      zip.outputStream.destroy();
+      // yazl types declare a Web ReadableStream, but at runtime this is a Node Readable
+      (zip.outputStream as unknown as import("node:stream").Readable).destroy();
     } catch {
       /* nothing left to destroy */
     }
