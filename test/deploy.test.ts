@@ -500,6 +500,8 @@ interface MockSystemOptions {
   refusePackages?: string[];
   /** Packages that already exist, name → software component. */
   packages?: Record<string, string>;
+  /** The app URL answers with the web login page instead of the application. */
+  loginGate?: boolean;
 }
 
 interface MockSystem {
@@ -679,6 +681,15 @@ async function startMockSystem(opts: MockSystemOptions = {}): Promise<MockSystem
         return;
       }
       if (pathOnly.startsWith("/sap/bc/ui5_ui5/sap/")) {
+        if (opts.loginGate) {
+          // the trial/protected ABAP Environment gate: cookies first, then a redirect to OAuth
+          res.writeHead(200, { "content-type": "text/html" });
+          res.end(
+            `<html><head><script nonce="x">document.cookie="fragmentAfterLogin="+encodeURIComponent(location.hash);` +
+              `location="https://tenant.authentication.example.com/oauth/authorize?response_type=code&client_id=sb-router"</script></head></html>`
+          );
+          return;
+        }
         res.writeHead(200, { "content-type": "text/html;charset=utf-8" });
         res.end("<html><body>app</body></html>");
         return;
@@ -828,6 +839,36 @@ describe("package recovery when the system offers no package", () => {
     await expect(
       deployFioriApp({ config, appPath: app, install: false, bootstrapCheck: false })
     ).rejects.toThrow(/Recovering into another package failed as well:[\s\S]*no customer software component/);
+
+    await system.close();
+    fs.rmSync(workDir, { recursive: true, force: true });
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+});
+
+describe("verifying an app URL that the system gates behind a web login", () => {
+  it("does not read the login page as the application being served", async () => {
+    const system = await startMockSystem({ loginGate: true });
+    const dataDir = emptyDataDir();
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "fiori-mcp-gate-"));
+    const config = testConfig([{ name: "MOCK", url: system.origin, user: "u", password: "p", client: "100" }], dataDir);
+    const app = writeApp(workDir, `${system.origin}/odata/v4/`);
+
+    const result = await deployFioriApp({ config, appPath: app, install: false, bootstrapCheck: false });
+
+    // the upload is real and the URL answers, so the flow still ends well…
+    expect(result.ok).toBe(true);
+    expect(result.httpStatus).toBe(201);
+    // …but the report says what the 200 actually was, instead of claiming the app served
+    expect(result.verification.attempted).toBe(true);
+    expect(result.verification.ok).toBe(true);
+    expect(result.verification.status).toBe(200);
+    expect(result.verification.note).toMatch(/web login page/);
+    expect(result.verification.note).toMatch(/sign-in/);
+    expect(result.warnings.join(" ")).toMatch(/web login page/);
+    // both attempts hit the gate: anonymous first, credentials second
+    const gateHits = system.requests.filter((r) => r.url.startsWith("/sap/bc/ui5_ui5/sap/"));
+    expect(gateHits).toHaveLength(2);
 
     await system.close();
     fs.rmSync(workDir, { recursive: true, force: true });

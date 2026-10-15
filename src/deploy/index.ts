@@ -446,6 +446,10 @@ export async function deployFioriApp(params: DeployParams): Promise<DeployResult
     let contentType: string | undefined;
     let note: string | undefined;
     let ok = false;
+    // a 200 that is the system's web login page proves the ICF node exists, not that the app
+    // was served — remember it and keep trying, so a credentials attempt that does reach the
+    // app wins over the gate
+    let gateNote: string | undefined;
     for (const attempt of attempts) {
       try {
         const res = await odataRequest({
@@ -460,6 +464,13 @@ export async function deployFioriApp(params: DeployParams): Promise<DeployResult
         lastStatus = res.status;
         contentType = res.headers["content-type"];
         if (res.status === 200) {
+          if (/fragmentAfterLogin|locationAfterLogin|oauth\/authorize/.test(res.text)) {
+            gateNote =
+              `${appUrl} answered 200 with the system's web login page: the application is on the server, but this ` +
+              `URL needs an interactive sign-in (a protected or trial ABAP Environment). Open it in a browser as the ` +
+              `business user to see the app.`;
+            continue; // credentials might still reach the app itself
+          }
           ok = true;
           note =
             attempt.label === "with credentials"
@@ -475,8 +486,14 @@ export async function deployFioriApp(params: DeployParams): Promise<DeployResult
         break;
       }
     }
+    // every attempt hit the login gate: the URL answers, the deploy is real, but only a signed-in
+    // browser sees the application — say so instead of reading like the app served anonymously
+    if (!ok && gateNote) {
+      ok = true;
+      note = gateNote;
+    }
     verification = { attempted: true, ok, status: lastStatus, contentType, note };
-    if (!ok && note) warnings.push(note);
+    if (note) warnings.push(note);
   }
 
   if (params.bootstrapCheck !== false && bootstrap.mode === "cdn" && bootstrap.to) {
